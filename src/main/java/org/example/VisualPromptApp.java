@@ -21,6 +21,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -65,6 +66,10 @@ public class VisualPromptApp {
     private String currentAspectRatio = "16:9";
     private String customMjFlags = "--style raw --v 6.1";
     private String lastCompiledPrompt = null;
+    private SceneContract lastContract = null;
+
+    // Whether regional/inpaint passes are auto-displayed beneath the compiled master prompt
+    private boolean regionalDisplayEnabled = true;
 
     public VisualPromptApp() {
         this.httpClient = HttpClient.newBuilder()
@@ -86,8 +91,9 @@ public class VisualPromptApp {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
 
         while (true) {
-            System.out.printf("\n[%s | %s | AR: %s]%n",
-                    activeEngine.getDisplayName(), activeModel.getLabel(), currentAspectRatio);
+            System.out.printf("\n[%s | %s | AR: %s | Regional: %s]%n",
+                    activeEngine.getDisplayName(), activeModel.getLabel(), currentAspectRatio,
+                    regionalDisplayEnabled ? "ON" : "OFF");
             System.out.println("> Enter scene description, .txt file path, or command (:help, :exit):");
             System.out.println("  (Type 'END' on a single line or press Enter twice to compile)");
 
@@ -123,8 +129,9 @@ public class VisualPromptApp {
 
                 // Stream evaluation with non-blocking UI ticker
                 SceneContract contract = streamStructuredContractWithFeedback(sceneText);
+                this.lastContract = contract;
 
-                // Print structural analysis phase
+                // Print structural analysis phase (now includes Phase 4 when applicable)
                 System.out.println(PromptCompiler.generateStructuralReport(contract));
 
                 // Compile final prompt with dynamic flags
@@ -141,6 +148,13 @@ public class VisualPromptApp {
                     System.out.println("[✓] Compiled prompt copied directly to system clipboard.");
                 } else {
                     System.out.println("[!] System clipboard unavailable.");
+                }
+
+                // Auto-display regional/inpaint passes beneath the master prompt when present
+                if (regionalDisplayEnabled && contract.regionalPasses() != null && !contract.regionalPasses().isEmpty()) {
+                    System.out.println();
+                    System.out.println(PromptCompiler.compileRegionalManifest(contract));
+                    System.out.println("[i] Use :regional to re-print and step through these passes, or :copy N to copy pass N.");
                 }
 
             } catch (IOException e) {
@@ -164,7 +178,8 @@ public class VisualPromptApp {
 
         ObjectNode rootNode = objectMapper.createObjectNode();
 
-        // System instructions calibrated for subjectless scenes and fluid organic synthesis
+        // System instructions calibrated for subjectless scenes, fluid organic synthesis,
+        // and multi-subject physical interaction / regional staging.
         ObjectNode systemInstructionNode = rootNode.putObject("systemInstruction");
         ArrayNode sysParts = systemInstructionNode.putArray("parts");
         sysParts.addObject().put("text", """
@@ -180,12 +195,23 @@ public class VisualPromptApp {
                    - Use 'CENTER_WEIGHTED' STRICTLY for intentional axial architectural symmetry (e.g. cathedral nave, Wes Anderson framing, one-point perspective corridor) or formal direct-stare portraits.
                 3. KINETIC ANCHORS:
                    - Leave kineticAnchors null (omit it) unless an active dynamic physical force, beam, energy discharge, projectile, or violent collision is physically occurring. For dormant or static scenes, DO NOT hallucinate kinetic forces.
-                4. ENVIRONMENTAL OPTICS:
+                4. MULTI-SUBJECT PHYSICAL INTERACTION (interactionDynamics):
+                   - Whenever two or more entities interact in direct physical contact (grappling, striking, blocking, holding a weapon against flesh, catching a blow), you MUST populate interactionDynamics.
+                   - contactPointCoordinate must be a precise textual anchor for exactly where bodies/objects physically meet (e.g. "upper right quadrant, neck level").
+                   - mutualTensionVector must describe the opposing/resisting physical forces at that point, not the overall action.
+                   - primaryFocalFailureRisk must name the specific non-contact cliché diffusion models default to for this exact interaction (e.g. "avoid blades crossing in mid-air instead of pressing into skin", "avoid attackers punching each other instead of the target", "avoid one arm going dormant while the other blocks") so it can be actively suppressed downstream.
+                   - Leave interactionDynamics null for single-subject scenes, non-contact scenes, or landscapes.
+                5. REGIONAL / INPAINT PASSES (regionalPasses):
+                   - Whenever interactionDynamics is populated, you MUST also deconstruct the scene into at least 2 distinct regionalPasses so the user has immediate targeted inpainting prompts ready if the base generation compromises geometry. At minimum, stage one broad anchor pass (e.g. PRIMARY_SUBJECT or SECONDARY_ACTOR covering overall pose/silhouette) and one tight pass on CONTACT_INTERACTION_ZONE covering only the local contact geometry.
+                   - Each isolatedPrompt must be hyper-specific to its bounded zone only: local anatomy, contact friction, material deformation. Do NOT restate scene-wide lighting, camera, or environment fluff in isolatedPrompt.
+                   - For single-subject or non-contact scenes, leave regionalPasses null/empty — do not manufacture passes that aren't needed.
+                6. ENVIRONMENTAL OPTICS:
                    - Derive light sources, rim lights, and shutter speeds authentically from the physical environment.
-                5. FLUID PROMPT SYNTHESIS (midjourneyPrompt & fluxPrompt):
+                7. FLUID PROMPT SYNTHESIS (midjourneyPrompt & fluxPrompt):
                    - Compose midjourneyPrompt and fluxPrompt with organic, dynamic sentence variation. AVOID rigid, boilerplate sentence sequencing (do NOT use identical opening formulas).
-                   - midjourneyPrompt: High-density, cinematic descriptive English incorporating the staging, optics, and lighting. Do NOT append flags; flags are appended dynamically by the compiler.
-                   - fluxPrompt: Comprehensive, tactile natural language prose optimized for Flux text-following.
+                   - When interactionDynamics is present, midjourneyPrompt and fluxPrompt MUST describe physical displacement at the contact point (skin indentation, fabric bunching, knuckle whitening, muscle strain) rather than abstract intent ("fighting", "holding weapons to"). Ground the contact in tangible, visible physical detail.
+                   - midjourneyPrompt: High-density, cinematic descriptive English incorporating the staging, optics, physics, and (when present) interaction contact detail. Do NOT append flags; flags are appended dynamically by the compiler.
+                   - fluxPrompt: Comprehensive, tactile natural language prose optimized for Flux text-following, honoring the same contact/failure-risk constraints as midjourneyPrompt when interactionDynamics is present.
                    - Strict ban on fluff: "photorealistic", "hyperrealistic", "8k", "16k", "masterpiece", "trending on artstation", "stunning", "breathtaking", "unreal engine".
                 """);
 
@@ -367,7 +393,11 @@ public class VisualPromptApp {
                 return true;
             }
             case ":copy" -> {
-                if (lastCompiledPrompt != null && !lastCompiledPrompt.isBlank()) {
+                // ":copy" alone re-copies the last master prompt.
+                // ":copy N" copies the isolated prompt of regional pass N (1-indexed).
+                if (tokens.length > 1 && arg.matches("^[0-9]+$")) {
+                    copyRegionalPassByIndex(Integer.parseInt(arg));
+                } else if (lastCompiledPrompt != null && !lastCompiledPrompt.isBlank()) {
                     if (copyToClipboard(lastCompiledPrompt)) {
                         System.out.println("[✓] Last compiled prompt re-copied to clipboard.");
                     } else {
@@ -377,6 +407,7 @@ public class VisualPromptApp {
                     System.out.println("[!] No compiled prompt available to copy yet.");
                 }
             }
+            case ":regional", ":passes" -> handleRegionalCommand(arg);
             case ":ar" -> {
                 if (arg.matches("^[0-9]+:[0-9]+$")) {
                     currentAspectRatio = arg;
@@ -421,6 +452,83 @@ public class VisualPromptApp {
         return false;
     }
 
+    /**
+     * Handles ":regional" / ":passes" with optional sub-arguments:
+     *   :regional            -> print the manifest for the last compiled scene
+     *   :regional on|off     -> toggle auto-display beneath future compiled prompts
+     *   :regional step       -> step through passes one at a time, waiting for Enter between each
+     */
+    private void handleRegionalCommand(String arg) {
+        switch (arg) {
+            case "on" -> {
+                regionalDisplayEnabled = true;
+                System.out.println("[✓] Regional pass auto-display: ON");
+            }
+            case "off" -> {
+                regionalDisplayEnabled = false;
+                System.out.println("[✓] Regional pass auto-display: OFF");
+            }
+            case "step" -> stepThroughRegionalPasses();
+            default -> {
+                if (lastContract == null) {
+                    System.out.println("[!] No scene compiled yet. Run a scene first, then use :regional.");
+                    return;
+                }
+                System.out.println(PromptCompiler.compileRegionalManifest(lastContract));
+            }
+        }
+    }
+
+    private void stepThroughRegionalPasses() {
+        if (lastContract == null || lastContract.regionalPasses() == null || lastContract.regionalPasses().isEmpty()) {
+            System.out.println("[!] No regional passes staged for the last compiled scene.");
+            return;
+        }
+
+        List<SceneContract.RegionalPass> passes = lastContract.regionalPasses();
+        BufferedReader stepReader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+
+        for (int i = 0; i < passes.size(); i++) {
+            SceneContract.RegionalPass pass = passes.get(i);
+            System.out.printf("%n[PASS %d/%d] Zone: %s%n", i + 1, passes.size(), pass.targetZone());
+            System.out.println("  Bounding : " + pass.boundingDescription());
+            System.out.println("  Prompt   : " + pass.isolatedPrompt());
+
+            if (copyToClipboard(pass.isolatedPrompt())) {
+                System.out.println("  [✓] Copied to clipboard.");
+            }
+
+            if (i < passes.size() - 1) {
+                System.out.println("  (Press Enter to view next pass...)");
+                try {
+                    stepReader.readLine();
+                } catch (IOException e) {
+                    break;
+                }
+            }
+        }
+        System.out.println("[✓] Regional pass walkthrough complete.");
+    }
+
+    private void copyRegionalPassByIndex(int oneIndexed) {
+        if (lastContract == null || lastContract.regionalPasses() == null || lastContract.regionalPasses().isEmpty()) {
+            System.out.println("[!] No regional passes staged for the last compiled scene.");
+            return;
+        }
+        List<SceneContract.RegionalPass> passes = lastContract.regionalPasses();
+        int idx = oneIndexed - 1;
+        if (idx < 0 || idx >= passes.size()) {
+            System.out.println("[!] Invalid pass index. Valid range: 1-" + passes.size());
+            return;
+        }
+        SceneContract.RegionalPass pass = passes.get(idx);
+        if (copyToClipboard(pass.isolatedPrompt())) {
+            System.out.println("[✓] Pass " + oneIndexed + " (" + pass.targetZone() + ") isolated prompt copied to clipboard.");
+        } else {
+            System.out.println("[!] Clipboard unavailable.");
+        }
+    }
+
     private boolean copyToClipboard(String text) {
         if (GraphicsEnvironment.isHeadless()) {
             return false;
@@ -439,6 +547,7 @@ public class VisualPromptApp {
         System.out.println("===========================================================================");
         System.out.println("     VISUAL PROMPT COMPILER - TYPE-SAFE STRUCTURED OUTPUT PIPELINE        ");
         System.out.println("  Universal Polymorphic Schema | Organic Synthesis | Dynamic Flags         ");
+        System.out.println("  Multi-Layer Regional / Inpaint Staging Engine                            ");
         System.out.println("===========================================================================");
         if (apiKey.equals(DEFAULT_API_KEY)) {
             System.out.println("[✓] Using configured fallback API key.");
@@ -455,7 +564,12 @@ public class VisualPromptApp {
                   :engine [mj|flux]   Switch diffusion target (Midjourney v6.1 vs Flux.1-Dev)
                   :mode [mj|flux]     Alias for :engine
                   :model [flash|pro]  Switch LLM backend (gemini-3.6-flash vs gemini-3.1-pro)
-                  :copy               Re-copy the last generated prompt to clipboard
+                  :copy               Re-copy the last compiled master prompt to clipboard
+                  :copy N             Copy the isolated prompt of regional pass N to clipboard
+                  :regional           Print the regional/inpaint manifest for the last compiled scene
+                  :passes             Alias for :regional
+                  :regional on|off    Toggle auto-display of regional passes beneath future compiled prompts
+                  :regional step      Step through regional passes one at a time, copying each in turn
                   :help, :h           Display this reference guide
                   :exit, :quit, :q    Terminate the application
                 
@@ -463,6 +577,14 @@ public class VisualPromptApp {
                   - Multi-line scene drafts: paste text, then type 'END' on a single line or press Enter twice.
                   - Inline aspect ratio: include '--ar <ratio>' anywhere in your scene text to override.
                   - Local file: provide the path to a UTF-8 text file (e.g., scene.txt).
+                
+                Multi-Subject Interaction & Regional Staging:
+                  - When a scene involves 2+ subjects in direct physical contact (grappling, striking,
+                    weapon-on-flesh), the compiled SceneContract will include interactionDynamics with an
+                    explicit contact point, tension vector, and the specific non-contact cliché to suppress.
+                  - Such scenes are automatically deconstructed into 2+ regionalPasses (e.g. a broad anchor
+                    pass and a tight CONTACT_INTERACTION_ZONE pass) so isolated inpainting prompts are ready
+                    immediately if the base diffusion output collapses the contact geometry.
                 """);
     }
 }
