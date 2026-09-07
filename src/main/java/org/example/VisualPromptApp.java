@@ -21,6 +21,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Iterator;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -30,85 +31,7 @@ public class VisualPromptApp {
 
     private static final String DEFAULT_API_KEY = "key";
     private static final String API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
-
-    public enum EngineProfile {
-        MIDJOURNEY_V6("Midjourney v6.1", """
-                You are the VISUAL PROMPT COMPILER targeting Midjourney v6.1.
-                Execute a strict 3-Phase Sequential Pipeline before producing the output.
-                
-                PHASE 1: SPATIAL BLOCKING & PHYSICS ISOLATION
-                - Define metric spatial staging: strictly establish metric distances between entities (e.g., minimum 6-10 meters between shooter and target to prevent frame cramping).
-                - Define depth tiers: Foreground, Midground, Background.
-                - Resolve physical mechanics: distinguish between moving sub-elements and rigid structures (e.g., motor chassis stays level on a linear vector; rotational motion is strictly isolated to cutting teeth).
-                
-                PHASE 2: ILLUMINATION & OPTICAL CALIBRATION
-                - Source light strictly from the scene context (e.g., cold industrial skylights, muzzle burst glare, tungsten dust scatter).
-                - Dictate shutter dynamics (e.g., 1/2000s freeze vs. motion blur) and aperture/depth of field matching Phase 1 staging.
-                
-                PHASE 3: TARGET DIFFUSION SYNTHESIS
-                - Synthesize the verified physics and optics into a single cohesive, complete prose paragraph.
-                - Drop zero subjects: every entity, weapon, and environmental anchor must be retained.
-                - Banned words: photorealistic, hyperrealistic, 8k, 16k, masterpiece, trending on artstation, unreal engine.
-                - Append strictly a single space followed by: --ar 16:9 --style raw --v 6.1
-                
-                OUTPUT FORMAT:
-                You must output the stages explicitly using these exact headers:
-                [PHASE 1: SPATIAL & PHYSICS]
-                <concise coordinate and mechanical breakdown>
-                
-                [PHASE 2: ILLUMINATION & OPTICS]
-                <concise lighting and optical specs>
-                
-                [FINAL PROMPT]
-                <single complete prompt ending with --ar 16:9 --style raw --v 6.1>
-                """),
-
-        FLUX_1_DEV("Flux.1-Dev", """
-                You are the VISUAL PROMPT COMPILER targeting Flux.1-Dev.
-                Execute a strict 3-Phase Sequential Pipeline before producing the output.
-                
-                PHASE 1: SPATIAL BLOCKING & PHYSICS ISOLATION
-                - Define metric spatial staging: strictly establish metric distances between entities to prevent frame cramping.
-                - Define depth tiers: Foreground, Midground, Background.
-                - Resolve physical mechanics: distinguish linear trajectory from internal moving mechanisms.
-                
-                PHASE 2: ILLUMINATION & OPTICAL CALIBRATION
-                - Source light strictly from environmental realism (direct beam, spill, falloff).
-                - Dictate shutter speed and surface material interactions (dust, sparks, fractures).
-                
-                PHASE 3: TARGET DIFFUSION SYNTHESIS
-                - Synthesize into a single high-fidelity English prose paragraph.
-                - Do NOT include any Midjourney parameters (no --ar, no --style, no --v).
-                - Banned words: photorealistic, hyperrealistic, 8k, 16k, masterpiece, trending on artstation, unreal engine.
-                
-                OUTPUT FORMAT:
-                You must output the stages explicitly using these exact headers:
-                [PHASE 1: SPATIAL & PHYSICS]
-                <concise coordinate and mechanical breakdown>
-                
-                [PHASE 2: ILLUMINATION & OPTICS]
-                <concise lighting and optical specs>
-                
-                [FINAL PROMPT]
-                <pure descriptive paragraph without flags>
-                """);
-
-        private final String displayName;
-        private final String systemInstruction;
-
-        EngineProfile(String displayName, String systemInstruction) {
-            this.displayName = displayName;
-            this.systemInstruction = systemInstruction;
-        }
-
-        public String getDisplayName() {
-            return displayName;
-        }
-
-        public String getSystemInstruction() {
-            return systemInstruction;
-        }
-    }
+    private static final Pattern INLINE_AR_PATTERN = Pattern.compile("--ar\\s+([0-9]+:[0-9]+)", Pattern.CASE_INSENSITIVE);
 
     public enum GeminiModel {
         FLASH("gemini-3.6-flash", "Gemini 3.6 Flash (Fast Draft)"),
@@ -135,14 +58,18 @@ public class VisualPromptApp {
     private final ObjectMapper objectMapper;
     private final String apiKey;
 
-    private EngineProfile activeEngine = EngineProfile.MIDJOURNEY_V6;
+    private PromptCompiler.EngineProfile activeEngine = PromptCompiler.EngineProfile.MIDJOURNEY_V6;
     private GeminiModel activeModel = GeminiModel.FLASH;
+
+    // Dynamic Flag Management
+    private String currentAspectRatio = "16:9";
+    private String customMjFlags = "--style raw --v 6.1";
     private String lastCompiledPrompt = null;
 
     public VisualPromptApp() {
         this.httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(15))
+                .connectTimeout(Duration.ofSeconds(20))
                 .build();
         this.objectMapper = new ObjectMapper();
 
@@ -159,7 +86,8 @@ public class VisualPromptApp {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
 
         while (true) {
-            System.out.printf("\n[%s | %s]%n", activeEngine.getDisplayName(), activeModel.getLabel());
+            System.out.printf("\n[%s | %s | AR: %s]%n",
+                    activeEngine.getDisplayName(), activeModel.getLabel(), currentAspectRatio);
             System.out.println("> Enter scene description, .txt file path, or command (:help, :exit):");
             System.out.println("  (Type 'END' on a single line or press Enter twice to compile)");
 
@@ -184,19 +112,35 @@ public class VisualPromptApp {
 
                 String sceneText = resolveSceneContent(trimmed);
 
-                System.out.printf("%n[Streaming Pipeline from %s for %s target...]%n%n",
-                        activeModel.getEndpointId(), activeEngine.getDisplayName());
+                // Detect inline aspect ratio override (e.g. "--ar 9:16")
+                String effectiveAr = currentAspectRatio;
+                Matcher arMatcher = INLINE_AR_PATTERN.matcher(sceneText);
+                if (arMatcher.find()) {
+                    effectiveAr = arMatcher.group(1);
+                    sceneText = arMatcher.replaceAll("").trim(); // Clean flag from narrative text
+                    System.out.println("[✓] Detected inline aspect ratio override: --ar " + effectiveAr);
+                }
 
-                String fullOutput = streamCompilePrompt(sceneText);
-                String extractedPrompt = extractFinalPrompt(fullOutput);
-                this.lastCompiledPrompt = extractedPrompt;
+                // Stream evaluation with non-blocking UI ticker
+                SceneContract contract = streamStructuredContractWithFeedback(sceneText);
 
-                System.out.println("\n");
-                boolean copied = copyToClipboard(extractedPrompt);
-                if (copied) {
-                    System.out.println("[✓] Target prompt [FINAL PROMPT] isolated and copied to system clipboard.");
+                // Print structural analysis phase
+                System.out.println(PromptCompiler.generateStructuralReport(contract));
+
+                // Compile final prompt with dynamic flags
+                String dynamicMjFlags = "--ar " + effectiveAr + " " + customMjFlags;
+                String finalPrompt = PromptCompiler.compile(contract, activeEngine, dynamicMjFlags);
+                this.lastCompiledPrompt = finalPrompt;
+
+                System.out.println("[PHASE 3: COMPILED DIFFUSION PROMPT]");
+                System.out.println("---------------------------------------------------------------------------");
+                System.out.println(finalPrompt);
+                System.out.println("---------------------------------------------------------------------------");
+
+                if (copyToClipboard(finalPrompt)) {
+                    System.out.println("[✓] Compiled prompt copied directly to system clipboard.");
                 } else {
-                    System.out.println("[!] Clipboard unavailable in this environment.");
+                    System.out.println("[!] System clipboard unavailable.");
                 }
 
             } catch (IOException e) {
@@ -206,29 +150,55 @@ public class VisualPromptApp {
                 System.err.println("\n[Thread Interrupted] " + e.getMessage());
                 break;
             } catch (Exception e) {
-                System.err.println("\n[Engine Error] " + e.getMessage());
+                System.err.println("\n[Pipeline Error] " + e.getMessage());
             }
         }
     }
 
-    private String streamCompilePrompt(String rawScene) throws IOException, InterruptedException {
+    /**
+     * Executes an SSE streaming request while maintaining an interactive terminal spinner.
+     */
+    private SceneContract streamStructuredContractWithFeedback(String rawScene) throws IOException, InterruptedException {
         String endpointUrl = API_BASE_URL + activeModel.getEndpointId()
                 + ":streamGenerateContent?alt=sse&key=" + apiKey;
 
         ObjectNode rootNode = objectMapper.createObjectNode();
 
+        // System instructions calibrated for subjectless scenes and fluid organic synthesis
         ObjectNode systemInstructionNode = rootNode.putObject("systemInstruction");
         ArrayNode sysParts = systemInstructionNode.putArray("parts");
-        sysParts.addObject().put("text", activeEngine.getSystemInstruction());
+        sysParts.addObject().put("text", """
+                You are an analytical Physical Visual Staging Engine.
+                Analyze the provided scene and extract strictly grounded physical parameters conforming to the requested JSON schema.
+                
+                STAGING & STRUCTURAL MANDATES:
+                1. SUBJECTLESS & ENVIRONMENTAL SCENES:
+                   - If the scene depicts an inanimate environment, architectural space, landscape, vehicle, or still life WITHOUT a primary character/figure, you MUST leave subjectStance null (omit it). Do NOT invent artificial humans or mannequins.
+                   - If an active character, creature, or figure is present, populate subjectStance with dynamic rotational orientation and center of mass. Avoid static A-poses.
+                2. PRIMARY SUBJECT OFFSET:
+                   - Prefer 'LEFT_THIRD' or 'RIGHT_THIRD' as default tension axes for subjects and focal landmarks.
+                   - Use 'CENTER_WEIGHTED' STRICTLY for intentional axial architectural symmetry (e.g. cathedral nave, Wes Anderson framing, one-point perspective corridor) or formal direct-stare portraits.
+                3. KINETIC ANCHORS:
+                   - Leave kineticAnchors null (omit it) unless an active dynamic physical force, beam, energy discharge, projectile, or violent collision is physically occurring. For dormant or static scenes, DO NOT hallucinate kinetic forces.
+                4. ENVIRONMENTAL OPTICS:
+                   - Derive light sources, rim lights, and shutter speeds authentically from the physical environment.
+                5. FLUID PROMPT SYNTHESIS (midjourneyPrompt & fluxPrompt):
+                   - Compose midjourneyPrompt and fluxPrompt with organic, dynamic sentence variation. AVOID rigid, boilerplate sentence sequencing (do NOT use identical opening formulas).
+                   - midjourneyPrompt: High-density, cinematic descriptive English incorporating the staging, optics, and lighting. Do NOT append flags; flags are appended dynamically by the compiler.
+                   - fluxPrompt: Comprehensive, tactile natural language prose optimized for Flux text-following.
+                   - Strict ban on fluff: "photorealistic", "hyperrealistic", "8k", "16k", "masterpiece", "trending on artstation", "stunning", "breathtaking", "unreal engine".
+                """);
 
         ArrayNode contentsArray = rootNode.putArray("contents");
         ObjectNode contentObj = contentsArray.addObject();
         contentObj.put("role", "user");
         ArrayNode userParts = contentObj.putArray("parts");
-        userParts.addObject().put("text", "Compile this scene through Phase 1, Phase 2, and Final Prompt synthesis:\n" + rawScene);
+        userParts.addObject().put("text", "Raw scene draft to structure:\n" + rawScene);
 
         ObjectNode generationConfig = rootNode.putObject("generationConfig");
-        generationConfig.put("temperature", 0.3);
+        generationConfig.put("response_mime_type", "application/json");
+        generationConfig.set("response_schema", SceneContract.buildGeminiResponseSchema(objectMapper));
+        generationConfig.put("temperature", 0.2);
         generationConfig.put("maxOutputTokens", 2048);
 
         ArrayNode safetySettings = rootNode.putArray("safetySettings");
@@ -251,49 +221,66 @@ public class VisualPromptApp {
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(jsonPayload, StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(90))
                 .build();
 
+        AtomicBoolean isStreaming = new AtomicBoolean(true);
+        Thread spinnerThread = new Thread(() -> {
+            String[] spinnerChars = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+            int index = 0;
+            long start = System.currentTimeMillis();
+            while (isStreaming.get()) {
+                double elapsed = (System.currentTimeMillis() - start) / 1000.0;
+                System.out.printf("\r[Compiling SceneContract %s %.1fs elapsed] ", spinnerChars[index++ % spinnerChars.length], elapsed);
+                System.out.flush();
+                try {
+                    Thread.sleep(80);
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+        });
+        spinnerThread.setDaemon(true);
+        spinnerThread.start();
+
+        StringBuilder jsonAccumulator = new StringBuilder();
         long startTime = System.currentTimeMillis();
-        long[] ttftHolder = new long[]{-1};
-        StringBuilder promptAccumulator = new StringBuilder();
+        int chunkCount = 0;
 
-        HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
+        try {
+            HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
 
-        if (response.statusCode() != 200) {
-            String errorBody = response.body().collect(Collectors.joining("\n"));
-            throw new IOException("Gemini API rejected request (HTTP " + response.statusCode() + "): " + errorBody);
-        }
+            if (response.statusCode() != 200) {
+                String errorBody = response.body().collect(Collectors.joining("\n"));
+                throw new IOException("Gemini API rejected request (HTTP " + response.statusCode() + "): " + errorBody);
+            }
 
-        try (Stream<String> lines = response.body()) {
-            Iterator<String> iterator = lines.iterator();
-            while (iterator.hasNext()) {
-                String line = iterator.next();
-                if (line.startsWith("data:")) {
-                    String data = line.substring(5).trim();
-                    if (data.isEmpty() || data.equals("[DONE]")) {
-                        continue;
-                    }
+            try (Stream<String> lines = response.body()) {
+                Iterator<String> iterator = lines.iterator();
+                while (iterator.hasNext()) {
+                    String line = iterator.next();
+                    if (line.startsWith("data:")) {
+                        String data = line.substring(5).trim();
+                        if (data.isEmpty() || data.equals("[DONE]")) {
+                            continue;
+                        }
 
-                    JsonNode root = objectMapper.readTree(data);
-                    if (root.has("error")) {
-                        throw new IOException("API Streaming Error: " + root.path("error").path("message").asText());
-                    }
+                        JsonNode root = objectMapper.readTree(data);
+                        if (root.has("error")) {
+                            throw new IOException("API Streaming Error: " + root.path("error").path("message").asText());
+                        }
 
-                    JsonNode candidates = root.path("candidates");
-                    if (candidates.isArray() && !candidates.isEmpty()) {
-                        JsonNode parts = candidates.get(0).path("content").path("parts");
-                        if (parts.isArray() && !parts.isEmpty()) {
-                            for (JsonNode part : parts) {
-                                if (part.has("text")) {
-                                    String chunk = part.path("text").asText();
-                                    if (!chunk.isEmpty()) {
-                                        if (ttftHolder[0] == -1) {
-                                            ttftHolder[0] = System.currentTimeMillis() - startTime;
+                        JsonNode candidates = root.path("candidates");
+                        if (candidates.isArray() && !candidates.isEmpty()) {
+                            JsonNode parts = candidates.get(0).path("content").path("parts");
+                            if (parts.isArray() && !parts.isEmpty()) {
+                                for (JsonNode part : parts) {
+                                    if (part.has("text")) {
+                                        String chunk = part.path("text").asText();
+                                        if (!chunk.isEmpty()) {
+                                            jsonAccumulator.append(chunk);
+                                            chunkCount++;
                                         }
-                                        System.out.print(chunk);
-                                        System.out.flush();
-                                        promptAccumulator.append(chunk);
                                     }
                                 }
                             }
@@ -301,30 +288,20 @@ public class VisualPromptApp {
                     }
                 }
             }
+        } finally {
+            isStreaming.set(false);
+            spinnerThread.interrupt();
+            long totalElapsed = System.currentTimeMillis() - startTime;
+            System.out.print("\r" + " ".repeat(60) + "\r");
+            System.out.printf("[✓ SSE Stream Received: %d chunks in %dms]%n%n", chunkCount, totalElapsed);
         }
 
-        long totalDuration = System.currentTimeMillis() - startTime;
-        long ttft = ttftHolder[0] == -1 ? totalDuration : ttftHolder[0];
-
-        System.out.printf("%n%n[Metrics: TTFT = %dms | Total Duration = %dms]", ttft, totalDuration);
-        return promptAccumulator.toString().trim();
-    }
-
-    private String extractFinalPrompt(String rawOutput) {
-        Pattern pattern = Pattern.compile("\\[FINAL PROMPT\\]\\s*([\\s\\S]+)$", Pattern.CASE_INSENSITIVE);
-        Matcher matcher = pattern.matcher(rawOutput);
-        String finalPrompt;
-        if (matcher.find()) {
-            finalPrompt = matcher.group(1).trim();
-        } else {
-            finalPrompt = rawOutput.trim();
+        String completeJson = jsonAccumulator.toString().trim();
+        if (completeJson.isEmpty()) {
+            throw new IOException("Zero JSON data accumulated from SSE stream.");
         }
 
-        if (activeEngine == EngineProfile.MIDJOURNEY_V6 && !finalPrompt.contains("--v 6")) {
-            finalPrompt = finalPrompt.replaceAll("[-–—\\s,;]+$", "").trim();
-            finalPrompt += " --ar 16:9 --style raw --v 6.1";
-        }
-        return finalPrompt;
+        return objectMapper.readValue(completeJson, SceneContract.class);
     }
 
     private String readBlockInput(BufferedReader reader) throws IOException {
@@ -400,12 +377,28 @@ public class VisualPromptApp {
                     System.out.println("[!] No compiled prompt available to copy yet.");
                 }
             }
+            case ":ar" -> {
+                if (arg.matches("^[0-9]+:[0-9]+$")) {
+                    currentAspectRatio = arg;
+                    System.out.println("[✓] Default aspect ratio updated to: " + currentAspectRatio);
+                } else {
+                    System.out.println("[!] Invalid aspect ratio format. Usage: :ar 16:9, :ar 9:16, :ar 1:1");
+                }
+            }
+            case ":flags" -> {
+                if (tokens.length > 1) {
+                    customMjFlags = input.substring(tokens[0].length()).trim();
+                    System.out.println("[✓] Custom Midjourney flags set to: " + customMjFlags);
+                } else {
+                    System.out.println("[!] Usage: :flags --style raw --v 6.1");
+                }
+            }
             case ":engine", ":mode" -> {
                 if (arg.equals("mj") || arg.equals("midjourney")) {
-                    activeEngine = EngineProfile.MIDJOURNEY_V6;
+                    activeEngine = PromptCompiler.EngineProfile.MIDJOURNEY_V6;
                     System.out.println("[✓] Target engine switched to: Midjourney v6.1");
                 } else if (arg.equals("flux") || arg.equals("flux1")) {
-                    activeEngine = EngineProfile.FLUX_1_DEV;
+                    activeEngine = PromptCompiler.EngineProfile.FLUX_1_DEV;
                     System.out.println("[✓] Target engine switched to: Flux.1-Dev");
                 } else {
                     System.out.println("[!] Invalid engine. Usage: :engine [mj|flux]");
@@ -444,28 +437,31 @@ public class VisualPromptApp {
 
     private void printBanner() {
         System.out.println("===========================================================================");
-        System.out.println("      VISUAL PROMPT COMPILER - SEQUENTIAL PIPELINE (PHASE 1-3)            ");
-        System.out.println("  Spatial Physics | Optical Calibration | Isolated Prompt Extraction       ");
+        System.out.println("     VISUAL PROMPT COMPILER - TYPE-SAFE STRUCTURED OUTPUT PIPELINE        ");
+        System.out.println("  Universal Polymorphic Schema | Organic Synthesis | Dynamic Flags         ");
         System.out.println("===========================================================================");
         if (apiKey.equals(DEFAULT_API_KEY)) {
-            System.out.println("[✓] API key configured via fallback constant.");
+            System.out.println("[✓] Using configured fallback API key.");
         } else {
-            System.out.println("[✓] GEMINI_API_KEY detected from environment.");
+            System.out.println("[✓] GEMINI_API_KEY loaded from environment.");
         }
     }
 
     private void printHelp() {
         System.out.println("""
                 Available Commands:
+                  :ar [ratio]         Set default aspect ratio (e.g., :ar 16:9, :ar 9:16, :ar 1:1)
+                  :flags [string]     Configure custom Midjourney flags (e.g., :flags --style raw --v 6.1)
                   :engine [mj|flux]   Switch diffusion target (Midjourney v6.1 vs Flux.1-Dev)
                   :mode [mj|flux]     Alias for :engine
                   :model [flash|pro]  Switch LLM backend (gemini-3.6-flash vs gemini-3.1-pro)
                   :copy               Re-copy the last generated prompt to clipboard
-                  :help, :h           Display this reference manual
+                  :help, :h           Display this reference guide
                   :exit, :quit, :q    Terminate the application
                 
                 Input Protocol:
                   - Multi-line scene drafts: paste text, then type 'END' on a single line or press Enter twice.
+                  - Inline aspect ratio: include '--ar <ratio>' anywhere in your scene text to override.
                   - Local file: provide the path to a UTF-8 text file (e.g., scene.txt).
                 """);
     }
