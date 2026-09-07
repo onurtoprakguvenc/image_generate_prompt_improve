@@ -3,13 +3,8 @@ package org.example;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
-/**
- * Intelligent prompt compiler and parameter manager.
- * Eradicates rigid Mad-Libs concatenation in favor of organic model prose
- * while enforcing dynamic syntax flags, buzzword sanitization, and
- * multi-subject physical-interaction / regional-inpainting staging.
- */
 public class PromptCompiler {
 
     public enum EngineProfile {
@@ -33,12 +28,19 @@ public class PromptCompiler {
             "breathtaking", "unreal engine", "award winning", "octane render"
     );
 
+    // Pre-compiled regex patterns to eliminate CPU overhead during prompt synthesis
+    private static final List<Pattern> BANNED_PATTERNS = BANNED_TOKENS.stream()
+            .map(token -> Pattern.compile("\\b" + Pattern.quote(token) + "\\b", Pattern.CASE_INSENSITIVE))
+            .collect(Collectors.toList());
+
     private static final Pattern PARAMETER_CLEANUP = Pattern.compile("(--ar|--style|--v|--chaos|--weird|--stylize).*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern PUNCTUATION_CLEANUP = Pattern.compile("[-–—\\s,;]+$");
 
-    /**
-     * Compiles the final prompt applying dynamic engine flags.
-     */
+    // İYİLEŞTİRME 1: Negatif Paradoks Regex Temizleyicileri
+    private static final Pattern NEGATIVE_AVOID_PATTERN = Pattern.compile("(?i)\\bavoid\\s+([^;.,]+)(?:;|,|\\.)?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NEGATIVE_WITHOUT_PATTERN = Pattern.compile("(?i)\\bwithout\\s+([^;.,]+)(?:;|,|\\.)?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NEGATIVE_DO_NOT_PATTERN = Pattern.compile("(?i)\\bdo\\s+not\\s+([^;.,]+)(?:;|,|\\.)?", Pattern.CASE_INSENSITIVE);
+
     public static String compile(SceneContract contract, EngineProfile profile, String dynamicFlags) {
         Objects.requireNonNull(contract, "SceneContract cannot be null");
         Objects.requireNonNull(profile, "EngineProfile cannot be null");
@@ -54,9 +56,9 @@ public class PromptCompiler {
                 ? c.midjourneyPrompt()
                 : c.dramaticAction();
 
+        // Kinetik temas direktifini bağla ve negatif paradoksu filtrele
         prose = weaveInteractionDirective(prose, c.interactionDynamics());
 
-        // Strip any residual flags generated in the prose string
         String base = PARAMETER_CLEANUP.matcher(prose.trim()).replaceAll("").trim();
         base = PUNCTUATION_CLEANUP.matcher(base).replaceAll("").trim();
         if (!base.endsWith(".")) {
@@ -64,6 +66,8 @@ public class PromptCompiler {
         }
 
         String sanitized = sanitizeBannedTokens(base);
+        sanitized = sanitizeNegativeParadox(sanitized);
+
         String cleanFlags = (flags != null && !flags.isBlank()) ? flags.trim() : "--ar 16:9 --style raw --v 6.1";
 
         return sanitized + " " + cleanFlags;
@@ -76,21 +80,20 @@ public class PromptCompiler {
 
         prose = weaveInteractionDirective(prose, c.interactionDynamics());
 
-        // Strip any accidental flags
         String base = PARAMETER_CLEANUP.matcher(prose.trim()).replaceAll("").trim();
         base = PUNCTUATION_CLEANUP.matcher(base).replaceAll("").trim();
         if (!base.endsWith(".")) {
             base += ".";
         }
 
-        return sanitizeBannedTokens(base);
+        String sanitized = sanitizeBannedTokens(base);
+        return sanitizeNegativeParadox(sanitized);
     }
 
     /**
-     * Weaves the anti-cliché physical-contact constraint into the master prose when
-     * interactionDynamics is present, without introducing banned buzzwords. Rather than
-     * bluntly prepending a directive label, this stitches the contact/tension description
-     * onto the prose as a natural clause so the compiled prompt still reads as organic prose.
+     * İYİLEŞTİRME 2: weaveInteractionDirective Güncellemesi
+     * "with avoid superficial hand placement" kalıbını tamamen ortadan kaldırır.
+     * Negatif risk uyarısını difüzyonun anladığı zorunlu pozitif temas komutuna dönüştürür.
      */
     private static String weaveInteractionDirective(String prose, SceneContract.InteractionDynamics dynamics) {
         if (dynamics == null) {
@@ -100,19 +103,39 @@ public class PromptCompiler {
         if (!trimmed.isEmpty() && !trimmed.endsWith(".") && !trimmed.endsWith(",")) {
             trimmed += ".";
         }
+
+        // Gemini'nin ürettiği failure risk içindeki "avoid" ve negatif fiilleri temizle
+        String positiveEnforcement = sanitizeNegativeParadox(dynamics.primaryFocalFailureRisk());
+
         String clause = String.format(
-                " Physical contact is explicit and unresolved at %s, %s, with %s.",
+                " Physical contact is structurally locked at %s, %s, explicitly enforcing %s.",
                 dynamics.contactPointCoordinate(),
                 dynamics.mutualTensionVector(),
-                dynamics.primaryFocalFailureRisk()
+                positiveEnforcement
         );
         return trimmed + clause;
     }
 
     /**
-     * Formats the regional/inpainting passes into a readable sequence for canvas/inpaint
-     * workflows. Returns an empty-manifest notice string if no regional passes exist.
+     * İYİLEŞTİRME 3: Negatif Paradoks Dönüştürücü (Syntax Sanitizer)
+     * "avoid X" ifadesini yakalayıp modeli pozitif fiziksel zorlamaya iter.
      */
+    private static String sanitizeNegativeParadox(String input) {
+        if (input == null || input.isBlank()) return "";
+
+        String result = input;
+        result = NEGATIVE_AVOID_PATTERN.matcher(result).replaceAll("actively suppressing $1 through explicit mechanical force;");
+        result = NEGATIVE_WITHOUT_PATTERN.matcher(result).replaceAll("maintaining unbroken contact against $1;");
+        result = NEGATIVE_DO_NOT_PATTERN.matcher(result).replaceAll("countering $1 with rigid physical displacement;");
+
+        // "avoid superficial hand placement" gibi spesifik güreş/kavga klişelerini kökten ezer:
+        result = result.replaceAll("(?i)\\bsuperficial\\s+hand\\s+placement\\b", "deep tissue compression and mechanical bone-to-bone grip")
+                .replaceAll("(?i)\\bhovering\\s+hands?\\b", "fingers physically depressing and sinking into skin")
+                .replaceAll("\\s{2,}", " ");
+
+        return result.trim();
+    }
+
     public static String compileRegionalManifest(SceneContract contract) {
         Objects.requireNonNull(contract, "SceneContract cannot be null");
 
@@ -129,6 +152,7 @@ public class PromptCompiler {
         int index = 1;
         for (SceneContract.RegionalPass pass : passes) {
             String isolated = sanitizeBannedTokens(pass.isolatedPrompt().trim());
+            isolated = sanitizeNegativeParadox(isolated);
             sb.append(String.format("""
                     [PASS %d] Zone: %s
                       Bounding   : %s
@@ -187,11 +211,11 @@ public class PromptCompiler {
                 p4.append(String.format("""
                           - Contact Point   : %s
                           - Tension Vector  : %s
-                          - Suppress Cliché : %s
+                          - Enforced Lock   : %s
                         """,
                         c.interactionDynamics().contactPointCoordinate(),
                         c.interactionDynamics().mutualTensionVector(),
-                        c.interactionDynamics().primaryFocalFailureRisk()
+                        sanitizeNegativeParadox(c.interactionDynamics().primaryFocalFailureRisk())
                 ));
             } else {
                 p4.append("  - Interaction Dynamics : [None]\n");
@@ -203,7 +227,7 @@ public class PromptCompiler {
                 for (SceneContract.RegionalPass pass : c.regionalPasses()) {
                     p4.append(String.format(
                             "      [%d] %s -> %s%n          Prompt: %s%n",
-                            idx, pass.targetZone(), pass.boundingDescription(), pass.isolatedPrompt()
+                            idx, pass.targetZone(), pass.boundingDescription(), sanitizeNegativeParadox(pass.isolatedPrompt())
                     ));
                     idx++;
                 }
@@ -239,11 +263,8 @@ public class PromptCompiler {
 
     private static String sanitizeBannedTokens(String input) {
         String sanitized = input;
-        for (String banned : BANNED_TOKENS) {
-            sanitized = Pattern.compile("\\b" + Pattern.quote(banned) + "\\b", Pattern.CASE_INSENSITIVE)
-                    .matcher(sanitized)
-                    .replaceAll("")
-                    .replaceAll("\\s{2,}", " ");
+        for (Pattern pattern : BANNED_PATTERNS) {
+            sanitized = pattern.matcher(sanitized).replaceAll("").replaceAll("\\s{2,}", " ");
         }
         return sanitized.trim();
     }
