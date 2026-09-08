@@ -33,13 +33,14 @@ public class PromptCompiler {
             .map(token -> Pattern.compile("\\b" + Pattern.quote(token) + "\\b", Pattern.CASE_INSENSITIVE))
             .collect(Collectors.toList());
 
-    private static final Pattern PARAMETER_CLEANUP = Pattern.compile("(--ar|--style|--v|--chaos|--weird|--stylize).*$", Pattern.CASE_INSENSITIVE);
+    // İYİLEŞTİRME: Greedy (.*$) yerine, sadece hedef bayrakları ve değerlerini budayan kapalı regex
+    private static final Pattern PARAMETER_CLEANUP = Pattern.compile("(--ar|--style|--v|--chaos|--weird|--stylize)\\s+\\S+", Pattern.CASE_INSENSITIVE);
     private static final Pattern PUNCTUATION_CLEANUP = Pattern.compile("[-–—\\s,;]+$");
 
-    // İYİLEŞTİRME 1: Negatif Paradoks Regex Temizleyicileri
-    private static final Pattern NEGATIVE_AVOID_PATTERN = Pattern.compile("(?i)\\bavoid\\s+([^;.,]+)(?:;|,|\\.)?", Pattern.CASE_INSENSITIVE);
-    private static final Pattern NEGATIVE_WITHOUT_PATTERN = Pattern.compile("(?i)\\bwithout\\s+([^;.,]+)(?:;|,|\\.)?", Pattern.CASE_INSENSITIVE);
-    private static final Pattern NEGATIVE_DO_NOT_PATTERN = Pattern.compile("(?i)\\bdo\\s+not\\s+([^;.,]+)(?:;|,|\\.)?", Pattern.CASE_INSENSITIVE);
+    // İYİLEŞTİRME: Overmatching bariyerleri eklendi (because, due to, instead, as kelimeleri bölge sınırı sayılır)
+    private static final Pattern NEGATIVE_AVOID_PATTERN = Pattern.compile("(?i)\\bavoid\\s+((?:(?!\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b)[^;.,])+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NEGATIVE_WITHOUT_PATTERN = Pattern.compile("(?i)\\bwithout\\s+((?:(?!\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b)[^;.,])+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NEGATIVE_DO_NOT_PATTERN = Pattern.compile("(?i)\\bdo\\s+not\\s+((?:(?!\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b)[^;.,])+)", Pattern.CASE_INSENSITIVE);
 
     public static String compile(SceneContract contract, EngineProfile profile, String dynamicFlags) {
         Objects.requireNonNull(contract, "SceneContract cannot be null");
@@ -90,11 +91,6 @@ public class PromptCompiler {
         return sanitizeNegativeParadox(sanitized);
     }
 
-    /**
-     * İYİLEŞTİRME 2: weaveInteractionDirective Güncellemesi
-     * "with avoid superficial hand placement" kalıbını tamamen ortadan kaldırır.
-     * Negatif risk uyarısını difüzyonun anladığı zorunlu pozitif temas komutuna dönüştürür.
-     */
     private static String weaveInteractionDirective(String prose, SceneContract.InteractionDynamics dynamics) {
         if (dynamics == null) {
             return prose;
@@ -116,17 +112,13 @@ public class PromptCompiler {
         return trimmed + clause;
     }
 
-    /**
-     * İYİLEŞTİRME 3: Negatif Paradoks Dönüştürücü (Syntax Sanitizer)
-     * "avoid X" ifadesini yakalayıp modeli pozitif fiziksel zorlamaya iter.
-     */
     private static String sanitizeNegativeParadox(String input) {
         if (input == null || input.isBlank()) return "";
 
         String result = input;
-        result = NEGATIVE_AVOID_PATTERN.matcher(result).replaceAll("actively suppressing $1 through explicit mechanical force;");
-        result = NEGATIVE_WITHOUT_PATTERN.matcher(result).replaceAll("maintaining unbroken contact against $1;");
-        result = NEGATIVE_DO_NOT_PATTERN.matcher(result).replaceAll("countering $1 with rigid physical displacement;");
+        result = NEGATIVE_AVOID_PATTERN.matcher(result).replaceAll("actively suppressing $1 through explicit mechanical force");
+        result = NEGATIVE_WITHOUT_PATTERN.matcher(result).replaceAll("maintaining unbroken contact against $1");
+        result = NEGATIVE_DO_NOT_PATTERN.matcher(result).replaceAll("countering $1 with rigid physical displacement");
 
         // "avoid superficial hand placement" gibi spesifik güreş/kavga klişelerini kökten ezer:
         result = result.replaceAll("(?i)\\bsuperficial\\s+hand\\s+placement\\b", "deep tissue compression and mechanical bone-to-bone grip")

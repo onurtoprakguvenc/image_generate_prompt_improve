@@ -79,7 +79,6 @@ public class VisualPromptApp {
         if (envKey != null && !envKey.isBlank()) {
             this.apiKey = envKey.trim();
         } else {
-            // Ortam değişkeni yoksa doğrudan buradaki tırnakların içine yaz:
             this.apiKey = "key";
         }
     }
@@ -194,18 +193,30 @@ public class VisualPromptApp {
 
         CompletableFuture<HttpResponse<Stream<String>>> futureResponse = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofLines());
 
-        String[] spinnerChars = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-        int index = 0;
         long start = System.currentTimeMillis();
+        Thread spinnerThread = new Thread(() -> {
+            String[] spinnerChars = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+            int index = 0;
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    double elapsed = (System.currentTimeMillis() - start) / 1000.0;
+                    System.out.printf("\r[Compiling SceneContract %s %.1fs elapsed] ", spinnerChars[index++ % spinnerChars.length], elapsed);
+                    System.out.flush();
+                    Thread.sleep(80);
+                }
+            } catch (InterruptedException ignored) {}
+        });
 
-        while (!futureResponse.isDone()) {
-            double elapsed = (System.currentTimeMillis() - start) / 1000.0;
-            System.out.printf("\r[Compiling SceneContract %s %.1fs elapsed] ", spinnerChars[index++ % spinnerChars.length], elapsed);
-            System.out.flush();
-            Thread.sleep(80);
+        spinnerThread.setDaemon(true);
+        spinnerThread.start();
+
+        HttpResponse<Stream<String>> response;
+        try {
+            response = futureResponse.get();
+        } finally {
+            spinnerThread.interrupt();
         }
 
-        HttpResponse<Stream<String>> response = futureResponse.get();
         if (response.statusCode() != 200) {
             String errorBody = response.body().collect(Collectors.joining("\n"));
             throw new IOException("Gemini API rejected request (HTTP " + response.statusCode() + "): " + errorBody);
