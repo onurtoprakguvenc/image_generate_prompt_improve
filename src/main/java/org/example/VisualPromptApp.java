@@ -62,12 +62,18 @@ public class VisualPromptApp {
         }
     }
 
+    public enum IngestionMode {
+        DIRECT, NARRATIVE
+    }
+
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final String apiKey;
+    private final NarrativeExtractor narrativeExtractor;
 
     private PromptCompiler.EngineProfile activeEngine = PromptCompiler.EngineProfile.MIDJOURNEY_V6;
     private GeminiModel activeModel = GeminiModel.FLASH;
+    private IngestionMode currentMode = IngestionMode.DIRECT;
 
     private String currentAspectRatio = "16:9";
     private String customMjFlags = "--style raw --v 6.1";
@@ -90,6 +96,7 @@ public class VisualPromptApp {
                 .configure(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES, true)
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         this.apiKey = apiKey.trim();
+        this.narrativeExtractor = new NarrativeExtractor();
     }
 
     public static void main(String[] args) {
@@ -114,9 +121,9 @@ public class VisualPromptApp {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
 
         while (true) {
-            System.out.printf("\n[%s | %s | AR: %s | Regional: %s]%n",
+            System.out.printf("\n[%s | %s | AR: %s | Mode: %s | Regional: %s]%n",
                     activeEngine.getDisplayName(), activeModel.getLabel(), currentAspectRatio,
-                    regionalDisplayEnabled ? "ON" : "OFF");
+                    currentMode.name(), regionalDisplayEnabled ? "ON" : "OFF");
             System.out.println("> Enter scene description, .txt file path, or command (:help, :exit):");
             System.out.println("  (Type 'END' on a single line or press Enter twice to compile)");
 
@@ -142,6 +149,12 @@ public class VisualPromptApp {
                     effectiveAr = arMatcher.group(1);
                     sceneText = arMatcher.replaceAll("").trim();
                     System.out.println("[✓] Detected inline aspect ratio override: --ar " + effectiveAr);
+                }
+
+                if (currentMode == IngestionMode.NARRATIVE) {
+                    System.out.println("[...] Resolving physical keyframe from narrative sequence...");
+                    sceneText = narrativeExtractor.extractKeyframe(sceneText, activeModel.getEndpointId(), apiKey);
+                    System.out.println("[✓] Keyframe Isolated:\n" + sceneText);
                 }
 
                 SceneContract contract = streamStructuredContractWithFeedbackAsync(sceneText);
@@ -206,7 +219,11 @@ public class VisualPromptApp {
                         + "camera altitude 1.6m-1.8m, 50mm normal prime perspective), maintaining an explicit physical "
                         + "buffer zone between the camera lens and the nearest subject. Prohibit ground-level or macro "
                         + "floor-clipping angles; always resolve to an authentic standing spectator vantage point, even "
-                        + "when contact dynamics occur at pavement level."
+                        + "when contact dynamics occur at pavement level.\n\n"
+                        + "ATTRIBUTE ISOLATION RULE: Whenever multiple distinct entities or mixed biological classes are present, "
+                        + "explicitly anchor species traits strictly to designated subjects (using localized kinematic nouns). "
+                        + "Explicitly stage surrounding observers as biologically distinct human civilians with normal human facial "
+                        + "features, hands, and attire, preventing cross-subject adjective drift."
         );
 
         ArrayNode contentsArray = rootNode.putArray("contents");
@@ -219,7 +236,7 @@ public class VisualPromptApp {
         generationConfig.put("response_mime_type", "application/json");
         generationConfig.set("response_schema", SceneContract.buildGeminiResponseSchema(objectMapper));
         generationConfig.put("temperature", 0.2);
-        generationConfig.put("maxOutputTokens", 3000);
+        generationConfig.put("maxOutputTokens", 8192);
 
         String jsonPayload = objectMapper.writeValueAsString(rootNode);
 
@@ -228,7 +245,7 @@ public class VisualPromptApp {
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(jsonPayload, StandardCharsets.UTF_8))
-                .timeout(Duration.ofSeconds(90))
+                .timeout(Duration.ofSeconds(120))
                 .build();
 
         CompletableFuture<HttpResponse<Stream<String>>> futureResponse =
@@ -405,10 +422,16 @@ public class VisualPromptApp {
                     System.out.println("[✓] Flags set to: " + customMjFlags);
                 }
             }
-            case ":engine", ":mode" -> {
+            case ":engine" -> {
                 if (arg.equals("mj") || arg.equals("midjourney")) activeEngine = PromptCompiler.EngineProfile.MIDJOURNEY_V6;
                 else if (arg.equals("flux") || arg.equals("flux1")) activeEngine = PromptCompiler.EngineProfile.FLUX_1_DEV;
             }
+            case ":mode" -> {
+                if (arg.equals("direct")) currentMode = IngestionMode.DIRECT;
+                else if (arg.equals("narrative")) currentMode = IngestionMode.NARRATIVE;
+            }
+            case ":narrative" -> currentMode = IngestionMode.NARRATIVE;
+            case ":direct" -> currentMode = IngestionMode.DIRECT;
             case ":model" -> {
                 if (arg.equals("flash")) activeModel = GeminiModel.FLASH;
                 else if (arg.equals("pro")) activeModel = GeminiModel.PRO;
@@ -467,6 +490,6 @@ public class VisualPromptApp {
     }
 
     private void printHelp() {
-        System.out.println("Commands: :ar <ratio>, :flags <flags>, :engine <mj|flux>, :model <flash|pro>, :copy, :regional <on|off|step>, :exit");
+        System.out.println("Commands: :ar <ratio>, :flags <flags>, :engine <mj|flux>, :model <flash|pro>, :mode <direct|narrative>, :narrative, :direct, :copy, :regional <on|off|step>, :exit");
     }
 }
