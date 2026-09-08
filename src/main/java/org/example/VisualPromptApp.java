@@ -1,7 +1,9 @@
 package org.example;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -24,6 +26,10 @@ import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -33,6 +39,7 @@ public class VisualPromptApp {
 
     private static final String API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
     private static final Pattern INLINE_AR_PATTERN = Pattern.compile("--ar\\s+([0-9]+:[0-9]+)", Pattern.CASE_INSENSITIVE);
+    private static final String[] SPINNER_CHARS = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
 
     public enum GeminiModel {
         FLASH("gemini-3.6-flash", "Gemini 3.6 Flash (Fast Draft)"),
@@ -68,23 +75,38 @@ public class VisualPromptApp {
     private SceneContract lastContract = null;
     private boolean regionalDisplayEnabled = true;
 
-    public VisualPromptApp() {
+    public VisualPromptApp(String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException(
+                    "GEMINI_API_KEY is not set. Export a valid Gemini API key before starting the compiler, e.g.:\n" +
+                            "  export GEMINI_API_KEY=your-real-key-here"
+            );
+        }
         this.httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(20))
                 .build();
-        this.objectMapper = new ObjectMapper();
-
-        String envKey = System.getenv("GEMINI_API_KEY");
-        if (envKey != null && !envKey.isBlank()) {
-            this.apiKey = envKey.trim();
-        } else {
-            this.apiKey = "key";
-        }
+        this.objectMapper = new ObjectMapper()
+                .configure(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES, true)
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        this.apiKey = apiKey.trim();
     }
 
     public static void main(String[] args) {
-        new VisualPromptApp().start();
+        String envKey = System.getenv("GEMINI_API_KEY");
+        if (envKey == null || envKey.isBlank()) {
+            envKey = "key";
+        }
+
+        VisualPromptApp app;
+        try {
+            app = new VisualPromptApp(envKey);
+        } catch (IllegalStateException e) {
+            System.err.println("[FATAL] " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+        app.start();
     }
 
     public void start() {
@@ -167,7 +189,25 @@ public class VisualPromptApp {
         ObjectNode rootNode = objectMapper.createObjectNode();
         ObjectNode systemInstructionNode = rootNode.putObject("systemInstruction");
         ArrayNode sysParts = systemInstructionNode.putArray("parts");
-        sysParts.addObject().put("text", "You are an analytical Physical Visual Staging Engine. Analyze the provided scene and extract strictly grounded physical parameters conforming to the requested JSON schema. Focus heavily on InteractionDynamics for multi-subject scenes.");
+        sysParts.addObject().put("text",
+                "You are an analytical Physical Visual Staging Engine. Analyze the provided scene and extract "
+                        + "strictly grounded physical parameters conforming to the requested JSON schema. Focus heavily "
+                        + "on InteractionDynamics for multi-subject scenes and SurrealMounting for non-standard physics "
+                        + "or anti-gravity environments.\n\n"
+                        + "POSITIVE CONTAINMENT RULE: Never use negative phrasing to describe anatomy. Instead, saturate "
+                        + "spatial coordinates positively: demand full-length, intact human figures visible from head to "
+                        + "footwear, maintaining strict anatomical continuity from wrists through shoulders to inverted "
+                        + "legs. Every described pose, contact point, and kinetic anchor must be phrased as a positive "
+                        + "structural commitment — what IS present and locked into place — rather than a prohibition of "
+                        + "what to avoid. If a subject is walking on their hands, positively state that every foot and "
+                        + "shoe is elevated into the open sky above, with palms as the sole ground-plane anchor, instead "
+                        + "of instructing the model to omit floating limbs.\n\n"
+                        + "SPECTATOR CLEARANCE RULE: Anchor camera rigs at natural spectator standing eye-level (virtual "
+                        + "camera altitude 1.6m-1.8m, 50mm normal prime perspective), maintaining an explicit physical "
+                        + "buffer zone between the camera lens and the nearest subject. Prohibit ground-level or macro "
+                        + "floor-clipping angles; always resolve to an authentic standing spectator vantage point, even "
+                        + "when contact dynamics occur at pavement level."
+        );
 
         ArrayNode contentsArray = rootNode.putArray("contents");
         ObjectNode contentObj = contentsArray.addObject();
@@ -191,60 +231,84 @@ public class VisualPromptApp {
                 .timeout(Duration.ofSeconds(90))
                 .build();
 
-        CompletableFuture<HttpResponse<Stream<String>>> futureResponse = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofLines());
+        CompletableFuture<HttpResponse<Stream<String>>> futureResponse =
+                httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofLines());
 
-        long start = System.currentTimeMillis();
-        Thread spinnerThread = new Thread(() -> {
-            String[] spinnerChars = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
-            int index = 0;
-            try {
-                while (!Thread.currentThread().isInterrupted()) {
-                    double elapsed = (System.currentTimeMillis() - start) / 1000.0;
-                    System.out.printf("\r[Compiling SceneContract %s %.1fs elapsed] ", spinnerChars[index++ % spinnerChars.length], elapsed);
-                    System.out.flush();
-                    Thread.sleep(80);
-                }
-            } catch (InterruptedException ignored) {}
+        ScheduledExecutorService progressExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "scene-contract-progress");
+            t.setDaemon(true);
+            return t;
         });
 
-        spinnerThread.setDaemon(true);
-        spinnerThread.start();
+        long start = System.currentTimeMillis();
+        AtomicInteger tick = new AtomicInteger(0);
+        progressExecutor.scheduleAtFixedRate(() -> {
+            double elapsed = (System.currentTimeMillis() - start) / 1000.0;
+            int idx = tick.getAndIncrement() % SPINNER_CHARS.length;
+            System.out.printf("\r[Compiling SceneContract %s %.1fs elapsed] ", SPINNER_CHARS[idx], elapsed);
+            System.out.flush();
+        }, 0, 80, TimeUnit.MILLISECONDS);
 
         HttpResponse<Stream<String>> response;
         try {
             response = futureResponse.get();
         } finally {
-            spinnerThread.interrupt();
+            progressExecutor.shutdownNow();
+            progressExecutor.awaitTermination(1, TimeUnit.SECONDS);
+            System.out.print("\r" + " ".repeat(60) + "\r");
         }
 
         if (response.statusCode() != 200) {
-            String errorBody = response.body().collect(Collectors.joining("\n"));
+            String errorBody;
+            try (Stream<String> errorLines = response.body()) {
+                errorBody = errorLines.collect(Collectors.joining("\n"));
+            }
             throw new IOException("Gemini API rejected request (HTTP " + response.statusCode() + "): " + errorBody);
         }
 
         StringBuilder jsonAccumulator = new StringBuilder();
         int chunkCount = 0;
+        boolean sawAnyDataLine = false;
 
         try (Stream<String> lines = response.body()) {
             Iterator<String> iterator = lines.iterator();
             while (iterator.hasNext()) {
-                String line = iterator.next();
-                if (line.startsWith("data:")) {
-                    String data = line.substring(5).trim();
-                    if (data.isEmpty() || data.equals("[DONE]")) continue;
+                String line;
+                try {
+                    line = iterator.next();
+                } catch (RuntimeException streamFault) {
+                    throw new IOException(
+                            "SSE stream interrupted after " + chunkCount + " chunk(s); accumulated "
+                                    + jsonAccumulator.length() + " chars before failure.",
+                            streamFault
+                    );
+                }
 
-                    JsonNode root = objectMapper.readTree(data);
-                    if (root.has("error")) throw new IOException("API Error: " + root.path("error").path("message").asText());
+                if (!line.startsWith("data:")) continue;
+                String data = line.substring(5).trim();
+                if (data.isEmpty() || data.equals("[DONE]")) continue;
 
-                    JsonNode candidates = root.path("candidates");
-                    if (candidates.isArray() && !candidates.isEmpty()) {
-                        JsonNode parts = candidates.get(0).path("content").path("parts");
-                        if (parts.isArray() && !parts.isEmpty()) {
-                            for (JsonNode part : parts) {
-                                if (part.has("text")) {
-                                    jsonAccumulator.append(part.path("text").asText());
-                                    chunkCount++;
-                                }
+                sawAnyDataLine = true;
+
+                JsonNode root;
+                try {
+                    root = objectMapper.readTree(data);
+                } catch (IOException malformed) {
+                    throw new IOException("Malformed SSE JSON chunk #" + (chunkCount + 1) + ": " + malformed.getMessage(), malformed);
+                }
+
+                if (root.has("error")) {
+                    throw new IOException("API Error: " + root.path("error").path("message").asText());
+                }
+
+                JsonNode candidates = root.path("candidates");
+                if (candidates.isArray() && !candidates.isEmpty()) {
+                    JsonNode parts = candidates.get(0).path("content").path("parts");
+                    if (parts.isArray() && !parts.isEmpty()) {
+                        for (JsonNode part : parts) {
+                            if (part.has("text")) {
+                                jsonAccumulator.append(part.path("text").asText());
+                                chunkCount++;
                             }
                         }
                     }
@@ -253,13 +317,25 @@ public class VisualPromptApp {
         }
 
         long totalElapsed = System.currentTimeMillis() - start;
-        System.out.print("\r" + " ".repeat(60) + "\r");
         System.out.printf("[✓ SSE Stream Received: %d chunks in %dms]%n%n", chunkCount, totalElapsed);
 
-        String completeJson = jsonAccumulator.toString().trim();
-        if (completeJson.isEmpty()) throw new IOException("Zero JSON data accumulated.");
+        if (!sawAnyDataLine) {
+            throw new IOException("Stream closed with zero SSE data lines received — network drop or proxy truncation.");
+        }
 
-        return objectMapper.readValue(completeJson, SceneContract.class);
+        String completeJson = jsonAccumulator.toString().trim();
+        if (completeJson.isEmpty()) {
+            throw new IOException("Zero JSON data accumulated despite " + chunkCount + " chunk(s) received.");
+        }
+
+        try {
+            return objectMapper.readValue(completeJson, SceneContract.class);
+        } catch (MismatchedInputException schemaMismatch) {
+            throw new IOException(
+                    "SceneContract deserialization failed (schema mismatch or truncated payload): " + schemaMismatch.getOriginalMessage(),
+                    schemaMismatch
+            );
+        }
     }
 
     private String readBlockInput(BufferedReader reader) throws IOException {
@@ -278,7 +354,6 @@ public class VisualPromptApp {
                 consecutiveEmptyLines = 0;
             }
             sb.append(line).append("\n");
-            if (System.console() == null && !reader.ready() && !sb.isEmpty()) break;
         }
         return (line == null && sb.isEmpty()) ? null : sb.toString();
     }
@@ -388,10 +463,10 @@ public class VisualPromptApp {
         System.out.println("===========================================================================");
         System.out.println("     VISUAL PROMPT COMPILER - TYPE-SAFE STRUCTURED OUTPUT PIPELINE        ");
         System.out.println("===========================================================================");
-        if (apiKey != null) System.out.println("[✓] GEMINI_API_KEY loaded securely from environment.");
+        System.out.println("[✓] GEMINI_API_KEY loaded securely from environment.");
     }
 
     private void printHelp() {
-        System.out.println("Help commands omitted for brevity.");
+        System.out.println("Commands: :ar <ratio>, :flags <flags>, :engine <mj|flux>, :model <flash|pro>, :copy, :regional <on|off|step>, :exit");
     }
 }

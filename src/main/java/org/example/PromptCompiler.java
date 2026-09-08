@@ -28,19 +28,30 @@ public class PromptCompiler {
             "breathtaking", "unreal engine", "award winning", "octane render"
     );
 
-    // Pre-compiled regex patterns to eliminate CPU overhead during prompt synthesis
     private static final List<Pattern> BANNED_PATTERNS = BANNED_TOKENS.stream()
             .map(token -> Pattern.compile("\\b" + Pattern.quote(token) + "\\b", Pattern.CASE_INSENSITIVE))
             .collect(Collectors.toList());
 
-    // İYİLEŞTİRME: Greedy (.*$) yerine, sadece hedef bayrakları ve değerlerini budayan kapalı regex
-    private static final Pattern PARAMETER_CLEANUP = Pattern.compile("(--ar|--style|--v|--chaos|--weird|--stylize)\\s+\\S+", Pattern.CASE_INSENSITIVE);
+    // Non-greedy, lookbehind-guarded parameter cleanup (handles multi-word flag values without swallowing downstream text)
+    private static final Pattern PARAMETER_CLEANUP = Pattern.compile(
+            "(?<![-\\w])(--ar|--style|--v|--chaos|--weird|--stylize|--no)\\s+((?:(?!--)\\S+)(?:\\s+(?:(?!--)\\S+))?)",
+            Pattern.CASE_INSENSITIVE
+    );
     private static final Pattern PUNCTUATION_CLEANUP = Pattern.compile("[-–—\\s,;]+$");
 
-    // İYİLEŞTİRME: Overmatching bariyerleri eklendi (because, due to, instead, as kelimeleri bölge sınırı sayılır)
-    private static final Pattern NEGATIVE_AVOID_PATTERN = Pattern.compile("(?i)\\bavoid\\s+((?:(?!\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b)[^;.,])+)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern NEGATIVE_WITHOUT_PATTERN = Pattern.compile("(?i)\\bwithout\\s+((?:(?!\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b)[^;.,])+)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern NEGATIVE_DO_NOT_PATTERN = Pattern.compile("(?i)\\bdo\\s+not\\s+((?:(?!\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b)[^;.,])+)", Pattern.CASE_INSENSITIVE);
+    // Expanded conjunction stop-set with a 120-character bounded match to prevent runaway clause ingestion
+    private static final String STOP_CONJUNCTIONS =
+            "\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b|\\bwhile\\b|\\bwhen\\b|\\bso that\\b|\\bin order to\\b";
+
+    private static final Pattern NEGATIVE_AVOID_PATTERN = Pattern.compile(
+            "(?i)\\bavoid\\s+((?:(?!" + STOP_CONJUNCTIONS + ")[^;.,]){1,120})"
+    );
+    private static final Pattern NEGATIVE_WITHOUT_PATTERN = Pattern.compile(
+            "(?i)\\bwithout\\s+((?:(?!" + STOP_CONJUNCTIONS + ")[^;.,]){1,120})"
+    );
+    private static final Pattern NEGATIVE_DO_NOT_PATTERN = Pattern.compile(
+            "(?i)\\bdo\\s+not\\s+((?:(?!" + STOP_CONJUNCTIONS + ")[^;.,]){1,120})"
+    );
 
     public static String compile(SceneContract contract, EngineProfile profile, String dynamicFlags) {
         Objects.requireNonNull(contract, "SceneContract cannot be null");
@@ -53,16 +64,14 @@ public class PromptCompiler {
     }
 
     private static String compileMidjourney(SceneContract c, String flags) {
-        String prose = (c.midjourneyPrompt() != null && !c.midjourneyPrompt().isBlank())
-                ? c.midjourneyPrompt()
-                : c.dramaticAction();
+        String prose = safe(c.midjourneyPrompt(), c.dramaticAction());
 
-        // Kinetik temas direktifini bağla ve negatif paradoksu filtrele
         prose = weaveInteractionDirective(prose, c.interactionDynamics());
+        prose = weaveSurrealMounting(prose, c.surrealMountings());
 
         String base = PARAMETER_CLEANUP.matcher(prose.trim()).replaceAll("").trim();
         base = PUNCTUATION_CLEANUP.matcher(base).replaceAll("").trim();
-        if (!base.endsWith(".")) {
+        if (!base.isEmpty() && !base.endsWith(".")) {
             base += ".";
         }
 
@@ -71,19 +80,36 @@ public class PromptCompiler {
 
         String cleanFlags = (flags != null && !flags.isBlank()) ? flags.trim() : "--ar 16:9 --style raw --v 6.1";
 
-        return sanitized + " " + cleanFlags;
+        // Positive Geometric Saturation model: No hardcoded generic negative strings are injected.
+        // Negative parameters are strictly limited to genuine displaced items from SurrealMounting.
+        if (c.surrealMountings() != null && !c.surrealMountings().isEmpty()) {
+            String surrealNegatives = c.surrealMountings().stream()
+                    .filter(Objects::nonNull)
+                    .map(SceneContract.SurrealMounting::requiredNegatives)
+                    .filter(n -> n != null && !n.isBlank())
+                    .collect(Collectors.joining(", "));
+
+            if (!surrealNegatives.isEmpty()) {
+                if (cleanFlags.toLowerCase().contains("--no ")) {
+                    cleanFlags += ", " + surrealNegatives;
+                } else {
+                    cleanFlags += " --no " + surrealNegatives;
+                }
+            }
+        }
+
+        return (sanitized + " " + cleanFlags).trim();
     }
 
     private static String compileFlux(SceneContract c) {
-        String prose = (c.fluxPrompt() != null && !c.fluxPrompt().isBlank())
-                ? c.fluxPrompt()
-                : c.dramaticAction();
+        String prose = safe(c.fluxPrompt(), c.dramaticAction());
 
         prose = weaveInteractionDirective(prose, c.interactionDynamics());
+        prose = weaveSurrealMounting(prose, c.surrealMountings());
 
         String base = PARAMETER_CLEANUP.matcher(prose.trim()).replaceAll("").trim();
         base = PUNCTUATION_CLEANUP.matcher(base).replaceAll("").trim();
-        if (!base.endsWith(".")) {
+        if (!base.isEmpty() && !base.endsWith(".")) {
             base += ".";
         }
 
@@ -92,24 +118,52 @@ public class PromptCompiler {
     }
 
     private static String weaveInteractionDirective(String prose, SceneContract.InteractionDynamics dynamics) {
+        String base = prose == null ? "" : prose;
         if (dynamics == null) {
-            return prose;
+            return base;
         }
-        String trimmed = prose.trim();
+        String trimmed = base.trim();
         if (!trimmed.isEmpty() && !trimmed.endsWith(".") && !trimmed.endsWith(",")) {
             trimmed += ".";
         }
 
-        // Gemini'nin ürettiği failure risk içindeki "avoid" ve negatif fiilleri temizle
-        String positiveEnforcement = sanitizeNegativeParadox(dynamics.primaryFocalFailureRisk());
+        String contactPoint = safe(dynamics.contactPointCoordinate(), "the primary contact zone");
+        String tensionVector = safe(dynamics.mutualTensionVector(), "sustained mutual force");
+        String positiveEnforcement = sanitizeNegativeParadox(safe(dynamics.primaryFocalFailureRisk(), ""));
 
-        String clause = String.format(
+        if (positiveEnforcement.isBlank()) {
+            return trimmed + String.format(
+                    " Physical contact is structurally locked at %s, %s.",
+                    contactPoint, tensionVector
+            );
+        }
+
+        return trimmed + String.format(
                 " Physical contact is structurally locked at %s, %s, explicitly enforcing %s.",
-                dynamics.contactPointCoordinate(),
-                dynamics.mutualTensionVector(),
-                positiveEnforcement
+                contactPoint, tensionVector, positiveEnforcement
         );
-        return trimmed + clause;
+    }
+
+    private static String weaveSurrealMounting(String prose, List<SceneContract.SurrealMounting> mountings) {
+        if (mountings == null || mountings.isEmpty()) {
+            return prose == null ? "" : prose;
+        }
+        String trimmed = (prose == null ? "" : prose).trim();
+        if (!trimmed.isEmpty() && !trimmed.endsWith(".") && !trimmed.endsWith(",")) {
+            trimmed += ".";
+        }
+
+        StringBuilder clause = new StringBuilder();
+        for (SceneContract.SurrealMounting m : mountings) {
+            if (m == null) continue;
+            String noun = safe(m.originalNoun(), "element");
+            String primitive = safe(m.geometricPrimitive(), "surface-bounded volume");
+            String verb = safe(m.surfaceMountingVerb(), "mechanically locked to the plane");
+            clause.append(String.format(" The %s is decoupled from standard gravity: resolving purely as a %s, structurally locked via %s.",
+                    noun, primitive, verb));
+        }
+
+        return trimmed + clause.toString();
     }
 
     private static String sanitizeNegativeParadox(String input) {
@@ -120,7 +174,6 @@ public class PromptCompiler {
         result = NEGATIVE_WITHOUT_PATTERN.matcher(result).replaceAll("maintaining unbroken contact against $1");
         result = NEGATIVE_DO_NOT_PATTERN.matcher(result).replaceAll("countering $1 with rigid physical displacement");
 
-        // "avoid superficial hand placement" gibi spesifik güreş/kavga klişelerini kökten ezer:
         result = result.replaceAll("(?i)\\bsuperficial\\s+hand\\s+placement\\b", "deep tissue compression and mechanical bone-to-bone grip")
                 .replaceAll("(?i)\\bhovering\\s+hands?\\b", "fingers physically depressing and sinking into skin")
                 .replaceAll("\\s{2,}", " ");
@@ -143,7 +196,12 @@ public class PromptCompiler {
 
         int index = 1;
         for (SceneContract.RegionalPass pass : passes) {
-            String isolated = sanitizeBannedTokens(pass.isolatedPrompt().trim());
+            if (pass == null) {
+                index++;
+                continue;
+            }
+            String isolatedRaw = safe(pass.isolatedPrompt(), "[missing isolated prompt]");
+            String isolated = sanitizeBannedTokens(isolatedRaw.trim());
             isolated = sanitizeNegativeParadox(isolated);
             sb.append(String.format("""
                     [PASS %d] Zone: %s
@@ -152,8 +210,8 @@ public class PromptCompiler {
                     ---------------------------------------------------------------------------
                     """,
                     index,
-                    pass.targetZone(),
-                    pass.boundingDescription(),
+                    pass.targetZone() != null ? pass.targetZone() : "[unspecified]",
+                    safe(pass.boundingDescription(), "[unspecified]"),
                     isolated
             ));
             index++;
@@ -163,63 +221,75 @@ public class PromptCompiler {
     }
 
     public static String generateStructuralReport(SceneContract c) {
-        String stanceReport;
-        if (c.subjectStance() == null) {
-            stanceReport = "  - Subject Stance  : [None - Subjectless Scene / Inanimate Environment]\n";
-        } else {
-            stanceReport = String.format("""
+        Objects.requireNonNull(c, "SceneContract cannot be null");
+        Objects.requireNonNull(c.cameraRig(), "cameraRig is required by schema but was null");
+        Objects.requireNonNull(c.environmentalOptics(), "environmentalOptics is required by schema but was null");
+
+        String stanceReport = c.subjectStance() == null
+                ? "  - Subject Stance  : [None - Subjectless Scene / Inanimate Environment]\n"
+                : String.format("""
                   - Stance & Vector : %s | %s
                   - Center of Mass  : %s
                 """,
-                    c.subjectStance().facingVector(),
-                    c.subjectStance().poseDynamics(),
-                    c.subjectStance().centerOfGravity()
-            );
-        }
+                safe(c.subjectStance().facingVector(), "[unspecified]"),
+                safe(c.subjectStance().poseDynamics(), "[unspecified]"),
+                safe(c.subjectStance().centerOfGravity(), "[unspecified]"));
 
-        String kineticReport;
-        if (c.kineticAnchors() == null) {
-            kineticReport = "  - Kinetic Anchors : [None - Static Scene]\n";
-        } else {
-            kineticReport = String.format("""
+        String kineticReport = c.kineticAnchors() == null
+                ? "  - Kinetic Anchors : [None - Static Scene]\n"
+                : String.format("""
                   - Physical Origin : %s
                   - Kinetic Vector  : %s
                   - Impact Area     : %s
                 """,
-                    c.kineticAnchors().exactOriginPoint(),
-                    c.kineticAnchors().forceTrajectory(),
-                    c.kineticAnchors().physicalImpactArea()
-            );
-        }
+                safe(c.kineticAnchors().exactOriginPoint(), "[unspecified]"),
+                safe(c.kineticAnchors().forceTrajectory(), "[unspecified]"),
+                safe(c.kineticAnchors().physicalImpactArea(), "[unspecified]"));
+
+        String surrealReport = (c.surrealMountings() == null || c.surrealMountings().isEmpty())
+                ? "  - Surreal Mounts  : [None]\n"
+                : "  - Surreal Mounts  :\n" + c.surrealMountings().stream()
+                .filter(Objects::nonNull)
+                .map(m -> String.format("      * %s -> %s [Negative: %s]",
+                        safe(m.originalNoun(), "[unspecified]"),
+                        safe(m.geometricPrimitive(), "[unspecified]"),
+                        safe(m.requiredNegatives(), "[none]")))
+                .collect(Collectors.joining("\n")) + "\n";
 
         String phase4;
-        if (c.interactionDynamics() == null && (c.regionalPasses() == null || c.regionalPasses().isEmpty())) {
+        boolean hasRegional = c.regionalPasses() != null && !c.regionalPasses().isEmpty();
+        if (c.interactionDynamics() == null && !hasRegional) {
             phase4 = "";
         } else {
             StringBuilder p4 = new StringBuilder();
             p4.append("\n[PHASE 4: INTERACTION DYNAMICS & REGIONAL MASKS]\n");
 
             if (c.interactionDynamics() != null) {
+                SceneContract.InteractionDynamics id = c.interactionDynamics();
                 p4.append(String.format("""
                           - Contact Point   : %s
                           - Tension Vector  : %s
                           - Enforced Lock   : %s
                         """,
-                        c.interactionDynamics().contactPointCoordinate(),
-                        c.interactionDynamics().mutualTensionVector(),
-                        sanitizeNegativeParadox(c.interactionDynamics().primaryFocalFailureRisk())
+                        safe(id.contactPointCoordinate(), "[unspecified]"),
+                        safe(id.mutualTensionVector(), "[unspecified]"),
+                        sanitizeNegativeParadox(safe(id.primaryFocalFailureRisk(), ""))
                 ));
             } else {
                 p4.append("  - Interaction Dynamics : [None]\n");
             }
 
-            if (c.regionalPasses() != null && !c.regionalPasses().isEmpty()) {
+            if (hasRegional) {
                 p4.append("  - Regional Passes :\n");
                 int idx = 1;
                 for (SceneContract.RegionalPass pass : c.regionalPasses()) {
+                    if (pass == null) { idx++; continue; }
                     p4.append(String.format(
                             "      [%d] %s -> %s%n          Prompt: %s%n",
-                            idx, pass.targetZone(), pass.boundingDescription(), sanitizeNegativeParadox(pass.isolatedPrompt())
+                            idx,
+                            pass.targetZone() != null ? pass.targetZone() : "[unspecified]",
+                            safe(pass.boundingDescription(), "[unspecified]"),
+                            sanitizeNegativeParadox(safe(pass.isolatedPrompt(), ""))
                     ));
                     idx++;
                 }
@@ -237,27 +307,36 @@ public class PromptCompiler {
                   - Frame Offset    : %s
                 %s
                 [PHASE 2: KINETICS & ENVIRONMENTAL OPTICS]
-                %s  - Primary Light   : %s
+                %s%s  - Primary Light   : %s
                   - Edge Rim Light  : %s
                   - Shutter & Atmos : %s | %s
                 %s""",
-                c.dramaticAction(),
-                c.cameraRig().viewportAngle(), c.cameraRig().focalLength(), c.cameraRig().cameraDistance(),
-                c.cameraRig().primarySubjectOffset(),
+                safe(c.dramaticAction(), "[unspecified]"),
+                safe(c.cameraRig().viewportAngle(), "[unspecified]"),
+                safe(c.cameraRig().focalLength(), "[unspecified]"),
+                safe(c.cameraRig().cameraDistance(), "[unspecified]"),
+                c.cameraRig().primarySubjectOffset() != null ? c.cameraRig().primarySubjectOffset() : "[unspecified]",
                 stanceReport,
                 kineticReport,
-                c.environmentalOptics().primaryLightSource(),
-                c.environmentalOptics().rimLight(),
-                c.environmentalOptics().shutterSpeed(), c.environmentalOptics().atmosphericParticulates(),
+                surrealReport,
+                safe(c.environmentalOptics().primaryLightSource(), "[unspecified]"),
+                safe(c.environmentalOptics().rimLight(), "[unspecified]"),
+                safe(c.environmentalOptics().shutterSpeed(), "[unspecified]"),
+                safe(c.environmentalOptics().atmosphericParticulates(), "[unspecified]"),
                 phase4
         );
     }
 
     private static String sanitizeBannedTokens(String input) {
+        if (input == null) return "";
         String sanitized = input;
         for (Pattern pattern : BANNED_PATTERNS) {
             sanitized = pattern.matcher(sanitized).replaceAll("").replaceAll("\\s{2,}", " ");
         }
         return sanitized.trim();
+    }
+
+    private static String safe(String value, String fallback) {
+        return (value == null || value.isBlank()) ? fallback : value;
     }
 }
