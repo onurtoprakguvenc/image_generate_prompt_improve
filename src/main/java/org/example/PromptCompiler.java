@@ -1,11 +1,29 @@
 package org.example;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-public class PromptCompiler {
+/**
+ * Assembles engine-ready prompts from a {@link SceneContract}.
+ *
+ * <p>Assembly is slot-ordered rather than append-based. Geometry fragments occupy the head
+ * of the string (highest effective attention weight, and the only region CLIP-L sees before
+ * its 77-token truncation); surface and optics occupy the tail.
+ *
+ * <p>Negative constructions are never rewritten in a way that preserves the negated noun.
+ * A mapped positive replacement is substituted, or the construction is dropped outright.
+ */
+public final class PromptCompiler {
+
+    private PromptCompiler() {
+    }
 
     public enum EngineProfile {
         MIDJOURNEY_V6("Midjourney v6.1"),
@@ -22,171 +40,436 @@ public class PromptCompiler {
         }
     }
 
+    /** A single inpainting pass, normalized and ready to hand to a regional tool. */
+    public record RegionalPrompt(String zone, String boundingDescription, String prompt) {
+    }
+
+    /**
+     * Structured compiler result. {@code positivePrompt} never contains flags;
+     * {@code flags} carries the fully merged Midjourney parameter string (empty for Flux);
+     * {@code negativePrompt} carries the deduplicated negative list for engines that take
+     * one out of band.
+     */
+    public record CompiledOutput(
+            EngineProfile profile,
+            String positivePrompt,
+            String negativePrompt,
+            String flags,
+            List<RegionalPrompt> regionalPrompts
+    ) {
+        public String clipboardText() {
+            return (flags == null || flags.isBlank()) ? positivePrompt : positivePrompt + " " + flags;
+        }
+
+        public boolean hasRegionalPrompts() {
+            return regionalPrompts != null && !regionalPrompts.isEmpty();
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Lexical policy
+    // ---------------------------------------------------------------------
+
     private static final List<String> BANNED_TOKENS = List.of(
-            "photorealistic", "hyperrealistic", "ultra-realistic", "8k", "16k",
+            "photorealistic", "hyperrealistic", "hyper-realistic", "ultra-realistic",
+            "hyper-detailed", "ultra-detailed", "8k", "16k", "4k",
             "masterpiece", "trending on artstation", "trending", "stunning",
-            "breathtaking", "unreal engine", "award winning", "octane render"
+            "breathtaking", "unreal engine", "award winning", "award-winning", "octane render"
     );
 
     private static final List<Pattern> BANNED_PATTERNS = BANNED_TOKENS.stream()
             .map(token -> Pattern.compile("\\b" + Pattern.quote(token) + "\\b", Pattern.CASE_INSENSITIVE))
-            .collect(Collectors.toList());
+            .toList();
 
-    // Non-greedy, lookbehind-guarded parameter cleanup (handles multi-word flag values without swallowing downstream text)
-    private static final Pattern PARAMETER_CLEANUP = Pattern.compile(
-            "(?<![-\\w])(--ar|--style|--v|--chaos|--weird|--stylize|--no)\\s+((?:(?!--)\\S+)(?:\\s+(?:(?!--)\\S+))?)",
-            Pattern.CASE_INSENSITIVE
-    );
-    private static final Pattern PUNCTUATION_CLEANUP = Pattern.compile("[-–—\\s,;]+$");
+    /**
+     * Concrete positive replacements for known failure-mode nouns. These are the only
+     * transforms permitted to survive a negative construction; anything unmapped is dropped,
+     * because losing a constraint is strictly safer than positively conditioning on it.
+     */
+    private static final Map<Pattern, String> POSITIVE_SUBSTITUTIONS = new LinkedHashMap<>();
 
-    // Expanded conjunction stop-set with a 120-character bounded match to prevent runaway clause ingestion
-    private static final String STOP_CONJUNCTIONS =
-            "\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bas\\b|\\bwhile\\b|\\bwhen\\b|\\bso that\\b|\\bin order to\\b";
+    static {
+        POSITIVE_SUBSTITUTIONS.put(
+                Pattern.compile("(?i)\\bfloating\\s+(hands?|limbs?|arms?)\\b"),
+                "palms flattened against the contact surface, wrists continuous into forearms");
+        POSITIVE_SUBSTITUTIONS.put(
+                Pattern.compile("(?i)\\bhovering\\s+hands?\\b"),
+                "fingertips depressing and sinking into skin");
+        POSITIVE_SUBSTITUTIONS.put(
+                Pattern.compile("(?i)\\bsuperficial\\s+hand\\s+placement\\b"),
+                "deep tissue compression, knuckles whitened");
+        POSITIVE_SUBSTITUTIONS.put(
+                Pattern.compile("(?i)\\b(detached|severed|truncated)\\s+(limbs?|hands?|arms?)\\b"),
+                "limbs continuous into shoulder and hip sockets");
+        POSITIVE_SUBSTITUTIONS.put(
+                Pattern.compile("(?i)\\bextra\\s+(fingers?|digits?)\\b"),
+                "exactly five fingers on each hand");
+        POSITIVE_SUBSTITUTIONS.put(
+                Pattern.compile("(?i)\\b(cropped|cut[- ]off)\\s+(feet|legs|figure)\\b"),
+                "full figure rendered head to footwear");
+    }
 
-    private static final Pattern NEGATIVE_AVOID_PATTERN = Pattern.compile(
-            "(?i)\\bavoid\\s+((?:(?!" + STOP_CONJUNCTIONS + ")[^;.,]){1,120})"
-    );
-    private static final Pattern NEGATIVE_WITHOUT_PATTERN = Pattern.compile(
-            "(?i)\\bwithout\\s+((?:(?!" + STOP_CONJUNCTIONS + ")[^;.,]){1,120})"
-    );
-    private static final Pattern NEGATIVE_DO_NOT_PATTERN = Pattern.compile(
-            "(?i)\\bdo\\s+not\\s+((?:(?!" + STOP_CONJUNCTIONS + ")[^;.,]){1,120})"
+    // Bounded so a stray construction cannot swallow the remainder of a clause.
+    private static final String NEGATION_BODY = "((?:(?!\\bbecause\\b|\\bdue to\\b|\\binstead\\b|\\bwhile\\b|\\bwhen\\b|\\bso that\\b|\\bin order to\\b)[^;.,]){1,120})";
+
+    private static final List<Pattern> NEGATION_PATTERNS = List.of(
+            Pattern.compile("(?i)\\bavoid(?:ing)?\\s+" + NEGATION_BODY),
+            Pattern.compile("(?i)\\bwithout\\s+" + NEGATION_BODY),
+            Pattern.compile("(?i)\\bdo\\s+not\\s+" + NEGATION_BODY),
+            Pattern.compile("(?i)\\bno\\s+(?:more\\s+)?" + NEGATION_BODY),
+            Pattern.compile("(?i)\\bnever\\s+" + NEGATION_BODY)
     );
 
-    public static String compile(SceneContract contract, EngineProfile profile, String dynamicFlags) {
+    /**
+     * Flag detection inside prose. The value run is bounded at six tokens and stops at a
+     * sentence terminator, so a stray flag cannot consume the descriptive text after it.
+     */
+    private static final Pattern PROSE_FLAG_CLEANUP = Pattern.compile(
+            "(?<![-\\w])--[A-Za-z][\\w-]*(?:\\s+(?!--)[^\\s]*[^\\s.]){0,6}", Pattern.CASE_INSENSITIVE);
+
+    /** Flag detection inside an actual parameter string. Value run is unbounded. */
+    private static final Pattern FLAG_PARSE = Pattern.compile(
+            "(--[A-Za-z][\\w-]*)\\s*((?:(?!--).)*)", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern TRAILING_PUNCTUATION = Pattern.compile("[-\u2013\u2014\\s,;.]+$");
+    private static final Pattern LEADING_PUNCTUATION = Pattern.compile("^[-\u2013\u2014\\s,;.]+");
+
+    public static final String DEFAULT_MJ_FLAGS = "--ar 16:9 --style raw --v 6.1";
+
+    // ---------------------------------------------------------------------
+    // Compilation
+    // ---------------------------------------------------------------------
+
+    public static CompiledOutput compile(SceneContract contract, EngineProfile profile, String requestedFlags) {
         Objects.requireNonNull(contract, "SceneContract cannot be null");
         Objects.requireNonNull(profile, "EngineProfile cannot be null");
 
-        return switch (profile) {
-            case MIDJOURNEY_V6 -> compileMidjourney(contract, dynamicFlags);
-            case FLUX_1_DEV -> compileFlux(contract);
-        };
-    }
+        SceneContract.PromptClauses clauses = contract.promptClauses();
 
-    private static String compileMidjourney(SceneContract c, String flags) {
-        String prose = safe(c.midjourneyPrompt(), c.dramaticAction());
+        // Phase 1 — volumetric geometry, head of the attention window.
+        List<String> geometry = new ArrayList<>();
+        addFragment(geometry, clauses == null ? null : clauses.subjectClause());
+        addFragment(geometry, clauses == null ? null : clauses.actionClause());
+        geometry.addAll(contactFragments(contract.interactionDynamics()));
+        geometry.addAll(surrealFragments(contract.surrealMountings()));
+        addFragment(geometry, clauses == null ? null : clauses.spatialClause());
 
-        prose = weaveInteractionDirective(prose, c.interactionDynamics());
-        prose = weaveSurrealMounting(prose, c.surrealMountings());
-
-        String base = PARAMETER_CLEANUP.matcher(prose.trim()).replaceAll("").trim();
-        base = PUNCTUATION_CLEANUP.matcher(base).replaceAll("").trim();
-        if (!base.isEmpty() && !base.endsWith(".")) {
-            base += ".";
+        // Degraded extraction: fall back to the raw action summary rather than emitting nothing.
+        if (geometry.isEmpty()) {
+            addFragment(geometry, contract.dramaticAction());
         }
 
-        String sanitized = sanitizeBannedTokens(base);
-        sanitized = sanitizeNegativeParadox(sanitized);
+        // Phase 2 — surface, material, optics. Tail position; safe to truncate.
+        List<String> surface = new ArrayList<>();
+        addFragment(surface, clauses == null ? null : clauses.surfaceClause());
 
-        String cleanFlags = (flags != null && !flags.isBlank()) ? flags.trim() : "--ar 16:9 --style raw --v 6.1";
+        String positive = switch (profile) {
+            case MIDJOURNEY_V6 -> joinCompact(geometry, surface);
+            case FLUX_1_DEV -> joinProse(geometry, surface);
+        };
 
-        // Positive Geometric Saturation model: No hardcoded generic negative strings are injected.
-        // Negative parameters are strictly limited to genuine displaced items from SurrealMounting.
-        if (c.surrealMountings() != null && !c.surrealMountings().isEmpty()) {
-            String surrealNegatives = c.surrealMountings().stream()
-                    .filter(Objects::nonNull)
-                    .map(SceneContract.SurrealMounting::requiredNegatives)
-                    .filter(n -> n != null && !n.isBlank())
-                    .collect(Collectors.joining(", "));
+        String negatives = collectNegatives(contract.surrealMountings());
 
-            if (!surrealNegatives.isEmpty()) {
-                if (cleanFlags.toLowerCase().contains("--no ")) {
-                    cleanFlags += ", " + surrealNegatives;
-                } else {
-                    cleanFlags += " --no " + surrealNegatives;
-                }
+        String flags = switch (profile) {
+            case MIDJOURNEY_V6 -> mergeFlags(blankTo(requestedFlags, DEFAULT_MJ_FLAGS), negatives);
+            case FLUX_1_DEV -> "";
+        };
+
+        return new CompiledOutput(profile, positive, negatives, flags, regionalPrompts(contract));
+    }
+
+    private static void addFragment(List<String> target, String raw) {
+        String normalized = normalizeFragment(raw);
+        if (!normalized.isEmpty()) {
+            target.add(normalized);
+        }
+    }
+
+    /**
+     * Removal order matters: flags and banned tokens are stripped first, delimiter debris is
+     * collapsed afterwards, and edge punctuation is trimmed last. The previous revision
+     * trimmed punctuation before stripping banned tokens, which left interior ", ," artifacts
+     * in the final prompt.
+     */
+    private static String normalizeFragment(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String s = PROSE_FLAG_CLEANUP.matcher(raw).replaceAll("");
+        s = enforcePositivePhrasing(s);
+        s = stripBannedTokens(s);
+        s = collapseEmptySegments(s);
+        s = LEADING_PUNCTUATION.matcher(s).replaceAll("");
+        s = TRAILING_PUNCTUATION.matcher(s).replaceAll("");
+        return s.trim();
+    }
+
+    private static String joinCompact(List<String> geometry, List<String> surface) {
+        List<String> all = new ArrayList<>(geometry);
+        all.addAll(surface);
+        String joined = String.join(", ", all).trim();
+        return joined.isEmpty() ? "" : joined + ".";
+    }
+
+    private static String joinProse(List<String> geometry, List<String> surface) {
+        StringBuilder sb = new StringBuilder();
+        String head = String.join(", ", geometry).trim();
+        if (!head.isEmpty()) {
+            sb.append(capitalize(head)).append(".");
+        }
+        String tail = String.join(", ", surface).trim();
+        if (!tail.isEmpty()) {
+            if (!sb.isEmpty()) {
+                sb.append(" ");
+            }
+            sb.append(capitalize(tail)).append(".");
+        }
+        return sb.toString();
+    }
+
+    private static String capitalize(String s) {
+        if (s == null || s.isEmpty()) {
+            return "";
+        }
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    // ---------------------------------------------------------------------
+    // Fragment sources
+    // ---------------------------------------------------------------------
+
+    /**
+     * Contact geometry as bare noun phrases. No instructional scaffolding
+     * ("physical contact is structurally locked at ...") is emitted — those tokens have no
+     * visual referent and dilute the concrete nouns around them.
+     * Absent fields contribute nothing rather than a filler placeholder.
+     */
+    private static List<String> contactFragments(SceneContract.InteractionDynamics dynamics) {
+        if (dynamics == null) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        addFragment(out, dynamics.contactPointCoordinate());
+        addFragment(out, dynamics.mutualTensionVector());
+        addFragment(out, dynamics.anatomicalCommitment());
+        return out;
+    }
+
+    /**
+     * Surreal mountings emit the geometric primitive and the mounting verb only. The original
+     * noun is deliberately withheld from the prompt: re-stating it is what reactivates the
+     * furniture heuristic the decomposition exists to defeat.
+     */
+    private static List<String> surrealFragments(List<SceneContract.SurrealMounting> mountings) {
+        if (mountings == null || mountings.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (SceneContract.SurrealMounting m : mountings) {
+            if (m == null) {
+                continue;
+            }
+            String primitive = normalizeFragment(m.geometricPrimitive());
+            if (primitive.isEmpty()) {
+                primitive = normalizeFragment(m.originalNoun());
+            }
+            String verb = normalizeFragment(m.surfaceMountingVerb());
+
+            if (!primitive.isEmpty() && !verb.isEmpty()) {
+                out.add(primitive + ", " + verb);
+            } else if (!primitive.isEmpty()) {
+                out.add(primitive);
+            } else if (!verb.isEmpty()) {
+                out.add(verb);
             }
         }
-
-        return (sanitized + " " + cleanFlags).trim();
+        return out;
     }
 
-    private static String compileFlux(SceneContract c) {
-        String prose = safe(c.fluxPrompt(), c.dramaticAction());
-
-        prose = weaveInteractionDirective(prose, c.interactionDynamics());
-        prose = weaveSurrealMounting(prose, c.surrealMountings());
-
-        String base = PARAMETER_CLEANUP.matcher(prose.trim()).replaceAll("").trim();
-        base = PUNCTUATION_CLEANUP.matcher(base).replaceAll("").trim();
-        if (!base.isEmpty() && !base.endsWith(".")) {
-            base += ".";
-        }
-
-        String sanitized = sanitizeBannedTokens(base);
-        return sanitizeNegativeParadox(sanitized);
-    }
-
-    private static String weaveInteractionDirective(String prose, SceneContract.InteractionDynamics dynamics) {
-        String base = prose == null ? "" : prose;
-        if (dynamics == null) {
-            return base;
-        }
-        String trimmed = base.trim();
-        if (!trimmed.isEmpty() && !trimmed.endsWith(".") && !trimmed.endsWith(",")) {
-            trimmed += ".";
-        }
-
-        String contactPoint = safe(dynamics.contactPointCoordinate(), "the primary contact zone");
-        String tensionVector = safe(dynamics.mutualTensionVector(), "sustained mutual force");
-        String positiveEnforcement = sanitizeNegativeParadox(safe(dynamics.primaryFocalFailureRisk(), ""));
-
-        if (positiveEnforcement.isBlank()) {
-            return trimmed + String.format(
-                    " Physical contact is structurally locked at %s, %s.",
-                    contactPoint, tensionVector
-            );
-        }
-
-        return trimmed + String.format(
-                " Physical contact is structurally locked at %s, %s, explicitly enforcing %s.",
-                contactPoint, tensionVector, positiveEnforcement
-        );
-    }
-
-    private static String weaveSurrealMounting(String prose, List<SceneContract.SurrealMounting> mountings) {
-        if (mountings == null || mountings.isEmpty()) {
-            return prose == null ? "" : prose;
-        }
-        String trimmed = (prose == null ? "" : prose).trim();
-        if (!trimmed.isEmpty() && !trimmed.endsWith(".") && !trimmed.endsWith(",")) {
-            trimmed += ".";
-        }
-
-        StringBuilder clause = new StringBuilder();
-        for (SceneContract.SurrealMounting m : mountings) {
-            if (m == null) continue;
-            String noun = safe(m.originalNoun(), "element");
-            String primitive = safe(m.geometricPrimitive(), "surface-bounded volume");
-            String verb = safe(m.surfaceMountingVerb(), "mechanically locked to the plane");
-            clause.append(String.format(" The %s is decoupled from standard gravity: resolving purely as a %s, structurally locked via %s.",
-                    noun, primitive, verb));
-        }
-
-        return trimmed + clause.toString();
-    }
-
-    private static String sanitizeNegativeParadox(String input) {
-        if (input == null || input.isBlank()) return "";
-
-        String result = input;
-        result = NEGATIVE_AVOID_PATTERN.matcher(result).replaceAll("actively suppressing $1 through explicit mechanical force");
-        result = NEGATIVE_WITHOUT_PATTERN.matcher(result).replaceAll("maintaining unbroken contact against $1");
-        result = NEGATIVE_DO_NOT_PATTERN.matcher(result).replaceAll("countering $1 with rigid physical displacement");
-
-        result = result.replaceAll("(?i)\\bsuperficial\\s+hand\\s+placement\\b", "deep tissue compression and mechanical bone-to-bone grip")
-                .replaceAll("(?i)\\bhovering\\s+hands?\\b", "fingers physically depressing and sinking into skin")
-                .replaceAll("\\s{2,}", " ");
-
-        return result.trim();
-    }
-
-    public static String compileRegionalManifest(SceneContract contract) {
-        Objects.requireNonNull(contract, "SceneContract cannot be null");
-
+    private static List<RegionalPrompt> regionalPrompts(SceneContract contract) {
         List<SceneContract.RegionalPass> passes = contract.regionalPasses();
         if (passes == null || passes.isEmpty()) {
-            return "[No regional passes staged for this scene — single-subject or non-contact composition.]";
+            return List.of();
+        }
+        List<RegionalPrompt> out = new ArrayList<>();
+        for (SceneContract.RegionalPass pass : passes) {
+            if (pass == null) {
+                continue;
+            }
+            String prompt = normalizeFragment(pass.isolatedPrompt());
+            if (prompt.isEmpty()) {
+                continue;
+            }
+            out.add(new RegionalPrompt(
+                    pass.targetZone() == null ? "[unspecified]" : pass.targetZone().name(),
+                    blankTo(pass.boundingDescription(), "[unspecified]"),
+                    prompt + "."
+            ));
+        }
+        return List.copyOf(out);
+    }
+
+    // ---------------------------------------------------------------------
+    // Negation handling
+    // ---------------------------------------------------------------------
+
+    /**
+     * Replaces or removes negative constructions. The captured noun is never carried
+     * forward — text encoders have no negation operator, so "actively suppressing floating
+     * hands" conditions the latent on floating hands.
+     */
+    static String enforcePositivePhrasing(String input) {
+        if (input == null || input.isBlank()) {
+            return "";
+        }
+        String result = input;
+        for (Pattern pattern : NEGATION_PATTERNS) {
+            result = rewriteNegation(result, pattern);
+        }
+        // Standalone failure-mode nouns appearing without a negation wrapper.
+        for (Map.Entry<Pattern, String> entry : POSITIVE_SUBSTITUTIONS.entrySet()) {
+            result = entry.getKey().matcher(result).replaceAll(Matcher.quoteReplacement(entry.getValue()));
+        }
+        return collapseEmptySegments(result).trim();
+    }
+
+    private static String rewriteNegation(String input, Pattern pattern) {
+        Matcher matcher = pattern.matcher(input);
+        StringBuilder sb = new StringBuilder();
+        while (matcher.find()) {
+            String captured = matcher.group(1);
+            String positive = lookupPositive(captured);
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(positive == null ? "" : positive));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String lookupPositive(String captured) {
+        if (captured == null) {
+            return null;
+        }
+        for (Map.Entry<Pattern, String> entry : POSITIVE_SUBSTITUTIONS.entrySet()) {
+            if (entry.getKey().matcher(captured).find()) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    // ---------------------------------------------------------------------
+    // Flag handling
+    // ---------------------------------------------------------------------
+
+    /**
+     * Parses a flag string into an ordered map and merges additional negatives into the
+     * {@code --no} argument list. String concatenation was previously appending negatives to
+     * the tail of the whole flag string, binding them to whichever parameter happened to be
+     * last (typically {@code --v}, a numeric parameter).
+     */
+    static String mergeFlags(String base, String extraNegatives) {
+        Map<String, String> flags = new LinkedHashMap<>();
+
+        Matcher matcher = FLAG_PARSE.matcher(base == null ? "" : base);
+        while (matcher.find()) {
+            String key = matcher.group(1).toLowerCase();
+            String value = matcher.group(2) == null ? "" : matcher.group(2).trim();
+            flags.merge(key, value, PromptCompiler::joinValues);
+        }
+
+        if (extraNegatives != null && !extraNegatives.isBlank()) {
+            flags.merge("--no", extraNegatives.trim(), PromptCompiler::joinValues);
+        }
+
+        if (flags.containsKey("--no")) {
+            flags.put("--no", dedupeCsv(flags.get("--no")));
+        }
+
+        return flags.entrySet().stream()
+                .map(e -> e.getValue().isBlank() ? e.getKey() : e.getKey() + " " + e.getValue())
+                .collect(Collectors.joining(" "))
+                .trim();
+    }
+
+    private static String joinValues(String a, String b) {
+        if (a == null || a.isBlank()) {
+            return b == null ? "" : b;
+        }
+        if (b == null || b.isBlank()) {
+            return a;
+        }
+        return a + ", " + b;
+    }
+
+    private static String collectNegatives(List<SceneContract.SurrealMounting> mountings) {
+        if (mountings == null || mountings.isEmpty()) {
+            return "";
+        }
+        String raw = mountings.stream()
+                .filter(Objects::nonNull)
+                .map(SceneContract.SurrealMounting::requiredNegatives)
+                .filter(n -> n != null && !n.isBlank())
+                .collect(Collectors.joining(", "));
+        return dedupeCsv(raw);
+    }
+
+    private static String dedupeCsv(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return "";
+        }
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        for (String part : csv.split(",")) {
+            String cleaned = part.trim().toLowerCase();
+            if (!cleaned.isEmpty()) {
+                seen.add(cleaned);
+            }
+        }
+        return String.join(", ", seen);
+    }
+
+    // ---------------------------------------------------------------------
+    // Text hygiene
+    // ---------------------------------------------------------------------
+
+    private static String stripBannedTokens(String input) {
+        if (input == null) {
+            return "";
+        }
+        String sanitized = input;
+        for (Pattern pattern : BANNED_PATTERNS) {
+            sanitized = pattern.matcher(sanitized).replaceAll("");
+        }
+        return sanitized;
+    }
+
+    /** Removes the delimiter debris left behind by token and negation removal. */
+    static String collapseEmptySegments(String input) {
+        if (input == null) {
+            return "";
+        }
+        return input
+                .replaceAll("\\s{2,}", " ")
+                .replaceAll("\\s+([,;.])", "$1")
+                .replaceAll("([,;])(?:\\s*[,;])+", "$1")
+                .replaceAll("(?:^|(?<=\\s))(?:a|an|the)\\s*(?=[,;.])", "")
+                .replaceAll("^[\\s,;]+", "")
+                .replaceAll("[\\s,;]+$", "")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+    }
+
+    private static String blankTo(String value, String fallback) {
+        return (value == null || value.isBlank()) ? fallback : value.trim();
+    }
+
+    // ---------------------------------------------------------------------
+    // Reporting
+    // ---------------------------------------------------------------------
+
+    public static String compileRegionalManifest(CompiledOutput output) {
+        Objects.requireNonNull(output, "CompiledOutput cannot be null");
+        if (!output.hasRegionalPrompts()) {
+            return "[No regional passes staged for this scene.]";
         }
 
         StringBuilder sb = new StringBuilder();
@@ -195,28 +478,13 @@ public class PromptCompiler {
         sb.append("===========================================================================\n");
 
         int index = 1;
-        for (SceneContract.RegionalPass pass : passes) {
-            if (pass == null) {
-                index++;
-                continue;
-            }
-            String isolatedRaw = safe(pass.isolatedPrompt(), "[missing isolated prompt]");
-            String isolated = sanitizeBannedTokens(isolatedRaw.trim());
-            isolated = sanitizeNegativeParadox(isolated);
-            sb.append(String.format("""
-                    [PASS %d] Zone: %s
-                      Bounding   : %s
-                      Prompt     : %s
-                    ---------------------------------------------------------------------------
-                    """,
-                    index,
-                    pass.targetZone() != null ? pass.targetZone() : "[unspecified]",
-                    safe(pass.boundingDescription(), "[unspecified]"),
-                    isolated
-            ));
+        for (RegionalPrompt pass : output.regionalPrompts()) {
+            sb.append("[PASS ").append(index).append("] Zone: ").append(pass.zone()).append("\n");
+            sb.append("  Bounding : ").append(pass.boundingDescription()).append("\n");
+            sb.append("  Prompt   : ").append(pass.prompt()).append("\n");
+            sb.append("---------------------------------------------------------------------------\n");
             index++;
         }
-
         return sb.toString().stripTrailing();
     }
 
@@ -225,118 +493,67 @@ public class PromptCompiler {
         Objects.requireNonNull(c.cameraRig(), "cameraRig is required by schema but was null");
         Objects.requireNonNull(c.environmentalOptics(), "environmentalOptics is required by schema but was null");
 
-        String stanceReport = c.subjectStance() == null
-                ? "  - Subject Stance  : [None - Subjectless Scene / Inanimate Environment]\n"
-                : String.format("""
-                  - Stance & Vector : %s | %s
-                  - Center of Mass  : %s
-                """,
-                safe(c.subjectStance().facingVector(), "[unspecified]"),
-                safe(c.subjectStance().poseDynamics(), "[unspecified]"),
-                safe(c.subjectStance().centerOfGravity(), "[unspecified]"));
+        StringBuilder sb = new StringBuilder();
 
-        String kineticReport = c.kineticAnchors() == null
-                ? "  - Kinetic Anchors : [None - Static Scene]\n"
-                : String.format("""
-                  - Physical Origin : %s
-                  - Kinetic Vector  : %s
-                  - Impact Area     : %s
-                """,
-                safe(c.kineticAnchors().exactOriginPoint(), "[unspecified]"),
-                safe(c.kineticAnchors().forceTrajectory(), "[unspecified]"),
-                safe(c.kineticAnchors().physicalImpactArea(), "[unspecified]"));
+        sb.append("[PHASE 1: VOLUMETRIC GEOMETRY]\n");
+        sb.append("  - Action Summary  : ").append(blankTo(c.dramaticAction(), "[unspecified]")).append("\n");
+        sb.append("  - Viewport & Lens : ")
+                .append(blankTo(c.cameraRig().viewportAngle(), "[unspecified]")).append(" | ")
+                .append(blankTo(c.cameraRig().focalLength(), "[unspecified]")).append(" (")
+                .append(blankTo(c.cameraRig().cameraDistance(), "[unspecified]")).append(")\n");
+        sb.append("  - Frame Offset    : ")
+                .append(c.cameraRig().primarySubjectOffset() == null ? "[unspecified]" : c.cameraRig().primarySubjectOffset())
+                .append("\n");
 
-        String surrealReport = (c.surrealMountings() == null || c.surrealMountings().isEmpty())
-                ? "  - Surreal Mounts  : [None]\n"
-                : "  - Surreal Mounts  :\n" + c.surrealMountings().stream()
-                .filter(Objects::nonNull)
-                .map(m -> String.format("      * %s -> %s [Negative: %s]",
-                        safe(m.originalNoun(), "[unspecified]"),
-                        safe(m.geometricPrimitive(), "[unspecified]"),
-                        safe(m.requiredNegatives(), "[none]")))
-                .collect(Collectors.joining("\n")) + "\n";
-
-        String phase4;
-        boolean hasRegional = c.regionalPasses() != null && !c.regionalPasses().isEmpty();
-        if (c.interactionDynamics() == null && !hasRegional) {
-            phase4 = "";
+        if (c.subjectStance() == null) {
+            sb.append("  - Subject Stance  : [None - subjectless scene]\n");
         } else {
-            StringBuilder p4 = new StringBuilder();
-            p4.append("\n[PHASE 4: INTERACTION DYNAMICS & REGIONAL MASKS]\n");
+            sb.append("  - Stance & Vector : ")
+                    .append(blankTo(c.subjectStance().facingVector(), "[unspecified]")).append(" | ")
+                    .append(blankTo(c.subjectStance().poseDynamics(), "[unspecified]")).append("\n");
+            sb.append("  - Center of Mass  : ")
+                    .append(blankTo(c.subjectStance().centerOfGravity(), "[unspecified]")).append("\n");
+        }
 
-            if (c.interactionDynamics() != null) {
-                SceneContract.InteractionDynamics id = c.interactionDynamics();
-                p4.append(String.format("""
-                          - Contact Point   : %s
-                          - Tension Vector  : %s
-                          - Enforced Lock   : %s
-                        """,
-                        safe(id.contactPointCoordinate(), "[unspecified]"),
-                        safe(id.mutualTensionVector(), "[unspecified]"),
-                        sanitizeNegativeParadox(safe(id.primaryFocalFailureRisk(), ""))
-                ));
-            } else {
-                p4.append("  - Interaction Dynamics : [None]\n");
-            }
+        if (c.kineticAnchors() == null) {
+            sb.append("  - Kinetic Anchors : [None - static scene]\n");
+        } else {
+            sb.append("  - Physical Origin : ").append(blankTo(c.kineticAnchors().exactOriginPoint(), "[unspecified]")).append("\n");
+            sb.append("  - Kinetic Vector  : ").append(blankTo(c.kineticAnchors().forceTrajectory(), "[unspecified]")).append("\n");
+            sb.append("  - Impact Area     : ").append(blankTo(c.kineticAnchors().physicalImpactArea(), "[unspecified]")).append("\n");
+        }
 
-            if (hasRegional) {
-                p4.append("  - Regional Passes :\n");
-                int idx = 1;
-                for (SceneContract.RegionalPass pass : c.regionalPasses()) {
-                    if (pass == null) { idx++; continue; }
-                    p4.append(String.format(
-                            "      [%d] %s -> %s%n          Prompt: %s%n",
-                            idx,
-                            pass.targetZone() != null ? pass.targetZone() : "[unspecified]",
-                            safe(pass.boundingDescription(), "[unspecified]"),
-                            sanitizeNegativeParadox(safe(pass.isolatedPrompt(), ""))
-                    ));
-                    idx++;
+        if (c.interactionDynamics() == null) {
+            sb.append("  - Interaction     : [None - single subject or non-contact]\n");
+        } else {
+            sb.append("  - Contact Point   : ").append(blankTo(c.interactionDynamics().contactPointCoordinate(), "[unspecified]")).append("\n");
+            sb.append("  - Tension Vector  : ").append(blankTo(c.interactionDynamics().mutualTensionVector(), "[unspecified]")).append("\n");
+            sb.append("  - Anatomy Lock    : ")
+                    .append(blankTo(enforcePositivePhrasing(c.interactionDynamics().anatomicalCommitment()), "[unspecified]"))
+                    .append("\n");
+        }
+
+        if (c.surrealMountings() == null || c.surrealMountings().isEmpty()) {
+            sb.append("  - Surreal Mounts  : [None]\n");
+        } else {
+            sb.append("  - Surreal Mounts  :\n");
+            for (SceneContract.SurrealMounting m : c.surrealMountings()) {
+                if (m == null) {
+                    continue;
                 }
-            } else {
-                p4.append("  - Regional Passes : [None staged]\n");
+                sb.append("      * ").append(blankTo(m.originalNoun(), "[unspecified]"))
+                        .append(" -> ").append(blankTo(m.geometricPrimitive(), "[unspecified]"))
+                        .append("  [negatives: ").append(blankTo(m.requiredNegatives(), "none")).append("]\n");
             }
-
-            phase4 = p4.toString();
         }
 
-        return String.format("""
-                [PHASE 1: SPATIAL BLOCKING & COMPOSITION]
-                  - Action Summary  : %s
-                  - Viewport & Lens : %s | %s (%s)
-                  - Frame Offset    : %s
-                %s
-                [PHASE 2: KINETICS & ENVIRONMENTAL OPTICS]
-                %s%s  - Primary Light   : %s
-                  - Edge Rim Light  : %s
-                  - Shutter & Atmos : %s | %s
-                %s""",
-                safe(c.dramaticAction(), "[unspecified]"),
-                safe(c.cameraRig().viewportAngle(), "[unspecified]"),
-                safe(c.cameraRig().focalLength(), "[unspecified]"),
-                safe(c.cameraRig().cameraDistance(), "[unspecified]"),
-                c.cameraRig().primarySubjectOffset() != null ? c.cameraRig().primarySubjectOffset() : "[unspecified]",
-                stanceReport,
-                kineticReport,
-                surrealReport,
-                safe(c.environmentalOptics().primaryLightSource(), "[unspecified]"),
-                safe(c.environmentalOptics().rimLight(), "[unspecified]"),
-                safe(c.environmentalOptics().shutterSpeed(), "[unspecified]"),
-                safe(c.environmentalOptics().atmosphericParticulates(), "[unspecified]"),
-                phase4
-        );
-    }
+        sb.append("\n[PHASE 2: SURFACE & ENVIRONMENTAL OPTICS]\n");
+        sb.append("  - Primary Light   : ").append(blankTo(c.environmentalOptics().primaryLightSource(), "[unspecified]")).append("\n");
+        sb.append("  - Edge Rim Light  : ").append(blankTo(c.environmentalOptics().rimLight(), "[unspecified]")).append("\n");
+        sb.append("  - Shutter & Atmos : ")
+                .append(blankTo(c.environmentalOptics().shutterSpeed(), "[unspecified]")).append(" | ")
+                .append(blankTo(c.environmentalOptics().atmosphericParticulates(), "[unspecified]")).append("\n");
 
-    private static String sanitizeBannedTokens(String input) {
-        if (input == null) return "";
-        String sanitized = input;
-        for (Pattern pattern : BANNED_PATTERNS) {
-            sanitized = pattern.matcher(sanitized).replaceAll("").replaceAll("\\s{2,}", " ");
-        }
-        return sanitized.trim();
-    }
-
-    private static String safe(String value, String fallback) {
-        return (value == null || value.isBlank()) ? fallback : value;
+        return sb.toString().stripTrailing();
     }
 }

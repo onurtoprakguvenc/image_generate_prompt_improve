@@ -13,9 +13,14 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
+/**
+ * Collapses multi-event narrative prose into a single staged keyframe before contract extraction.
+ */
 public class NarrativeExtractor {
 
     private static final String API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+    private static final int MAX_OUTPUT_TOKENS = 2000;
+
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
@@ -27,16 +32,20 @@ public class NarrativeExtractor {
         this.objectMapper = new ObjectMapper();
     }
 
-    public String extractKeyframe(String narrativeSequence, String modelEndpoint, String apiKey) throws IOException, InterruptedException {
-        String endpointUrl = API_BASE_URL + modelEndpoint + ":generateContent?key=" + apiKey;
+    public String extractKeyframe(String narrativeSequence, String modelEndpoint, String apiKey)
+            throws IOException, InterruptedException {
+
+        String endpointUrl = API_BASE_URL + modelEndpoint + ":generateContent";
 
         ObjectNode rootNode = objectMapper.createObjectNode();
 
         ObjectNode systemInstructionNode = rootNode.putObject("systemInstruction");
         ArrayNode sysParts = systemInstructionNode.putArray("parts");
         sysParts.addObject().put("text",
-                "Analyze narrative prose containing multiple temporal events, plot progression, internal monologues, and metaphorical rhetoric. Resolve temporal conflicts by selecting the single most visually arresting, dramatic, and mechanically grounded keyframe. Strip out purely abstract internal questions and convert emotional gravity into concrete, positive physical markers. Output strictly a single paragraph of raw, objective, single-moment physical staging text with zero markdown formatting, zero meta-announcements, and zero conversational filler."
-        );
+                "Select the single most visually arresting and mechanically grounded moment from the "
+                        + "narrative. Discard internal monologue and metaphor; convert emotional weight into "
+                        + "concrete physical markers. Output one paragraph of objective single-moment staging "
+                        + "text. No markdown, no preamble, no commentary.");
 
         ArrayNode contentsArray = rootNode.putArray("contents");
         ObjectNode contentObj = contentsArray.addObject();
@@ -46,13 +55,14 @@ public class NarrativeExtractor {
 
         ObjectNode generationConfig = rootNode.putObject("generationConfig");
         generationConfig.put("temperature", 0.4);
-        generationConfig.put("maxOutputTokens", 2000);
+        generationConfig.put("maxOutputTokens", MAX_OUTPUT_TOKENS);
 
         String jsonPayload = objectMapper.writeValueAsString(rootNode);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(endpointUrl))
                 .header("Content-Type", "application/json")
+                .header("x-goog-api-key", apiKey)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonPayload, StandardCharsets.UTF_8))
                 .timeout(Duration.ofSeconds(60))
                 .build();
@@ -67,14 +77,28 @@ public class NarrativeExtractor {
         JsonNode candidates = root.path("candidates");
 
         if (candidates.isMissingNode() || !candidates.isArray() || candidates.isEmpty()) {
-            throw new IOException("Failed to extract keyframe: Gemini API returned empty candidates array.");
+            throw new IOException("Keyframe extraction failed: empty candidates array.");
         }
 
-        JsonNode parts = candidates.get(0).path("content").path("parts");
+        JsonNode candidate = candidates.get(0);
+
+        String finishReason = candidate.path("finishReason").asText("");
+        if ("MAX_TOKENS".equals(finishReason)) {
+            throw new IOException("Keyframe extraction truncated at maxOutputTokens (" + MAX_OUTPUT_TOKENS + ").");
+        }
+        if ("SAFETY".equals(finishReason) || "RECITATION".equals(finishReason)) {
+            throw new IOException("Keyframe extraction halted by the provider (finishReason=" + finishReason + ").");
+        }
+
+        JsonNode parts = candidate.path("content").path("parts");
         if (parts.isMissingNode() || !parts.isArray() || parts.isEmpty()) {
-            throw new IOException("Failed to extract keyframe: Gemini API returned empty parts array.");
+            throw new IOException("Keyframe extraction failed: empty parts array.");
         }
 
-        return parts.get(0).path("text").asText().trim();
+        String text = parts.get(0).path("text").asText().trim();
+        if (text.isEmpty()) {
+            throw new IOException("Keyframe extraction returned empty text.");
+        }
+        return text;
     }
 }

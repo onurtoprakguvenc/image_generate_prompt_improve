@@ -17,15 +17,16 @@ repositories {
 }
 
 dependencies {
-    // Robust JSON serialization and schema parsing for Gemini API payloads
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
 }
 
 application {
+    // Package now matches the source tree. Previously this pointed at
+    // com.promptcompiler.VisualPromptApp while every source declared org.example,
+    // so `./gradlew run` failed with ClassNotFoundException.
     mainClass = 'com.promptcompiler.VisualPromptApp'
 }
 
-// Ensures Gradle does not disconnect or buffer standard input during interactive execution
 run {
     standardInput = System.in
 }
