@@ -102,7 +102,7 @@ public class VisualPromptApp {
     public static void main(String[] args) {
         String envKey = System.getenv("GEMINI_API_KEY");
         if (envKey == null || envKey.isBlank()) {
-            envKey = "key";
+            envKey = "temporary_blank";
         }
 
         VisualPromptApp app;
@@ -236,7 +236,7 @@ public class VisualPromptApp {
         generationConfig.put("response_mime_type", "application/json");
         generationConfig.set("response_schema", SceneContract.buildGeminiResponseSchema(objectMapper));
         generationConfig.put("temperature", 0.2);
-        generationConfig.put("maxOutputTokens", 8192);
+        generationConfig.put("maxOutputTokens", 4000);
 
         String jsonPayload = objectMapper.writeValueAsString(rootNode);
 
