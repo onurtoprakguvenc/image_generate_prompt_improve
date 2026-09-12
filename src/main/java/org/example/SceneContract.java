@@ -167,7 +167,7 @@ public record SceneContract(
         ObjectNode camProps = cameraNode.putObject("properties");
         camProps.putObject("viewportAngle")
                 .put("type", "string")
-                .put("description", "Standing spectator vantage, virtual camera altitude 1.6-1.8m. State the open clearance to the nearest figure directly. Ground-level and macro floor-clipping angles are prohibited; resolve them to the standing vantage.");
+                .put("description", "Standing spectator vantage, virtual camera altitude 1.6-1.8m. State the open clearance to the nearest figure directly, maintaining a clean upright eye-level perspective.");
         camProps.putObject("focalLength")
                 .put("type", "string")
                 .put("description", "Default 50mm normal prime unless the scene requires otherwise.");
@@ -211,11 +211,11 @@ public record SceneContract(
         interactionNode.put("description", "Contact mapping between two or more actively interacting subjects. Omit entirely for single-subject or non-contact scenes. Saturate the contact geometry with concrete displacement (skin indentation, fabric bunching, knuckle whitening) and keep primary subjects lexically separate from spectators.");
         ObjectNode interactionProps = interactionNode.putObject("properties");
         interactionProps.putObject("contactPointCoordinate").put("type", "string")
-                .put("description", "Where contact occurs, e.g. 'upper right quadrant at neck level'. 12 words maximum.");
+                .put("description", "Where contact occurs, e.g. 'upper right quadrant at neck level'.");
         interactionProps.putObject("mutualTensionVector").put("type", "string")
-                .put("description", "Kinetic resistance between subjects, e.g. 'opposing inward lateral force'. 12 words maximum.");
+                .put("description", "Kinetic resistance between subjects, e.g. 'opposing inward lateral force'.");
         interactionProps.putObject("anatomicalCommitment").put("type", "string")
-                .put("description", "What IS present and load-bearing, stated positively: 'palms planted and bearing weight, wrists continuous into forearms, shoulders squared'. Never a prohibition, never the word avoid, without, or not. 20 words maximum.");
+                .put("description", "Positive load-bearing structures only, designating active support points such as planted palms, continuous wrists, squared shoulders, and unbroken kinematic chains.");
         interactionNode.putArray("required")
                 .add("contactPointCoordinate").add("mutualTensionVector").add("anatomicalCommitment");
 
@@ -229,9 +229,9 @@ public record SceneContract(
         surrealItemProps.putObject("originalNoun").put("type", "string")
                 .put("description", "The source noun, e.g. 'bed frame on ceiling'. Used for logging only.");
         surrealItemProps.putObject("geometricPrimitive").put("type", "string")
-                .put("description", "Deconstructed geometry, e.g. 'flush horizontal mattress with zero clearance'. 12 words maximum.");
+                .put("description", "Deconstructed geometry, e.g. 'flush horizontal mattress with zero clearance'.");
         surrealItemProps.putObject("surfaceMountingVerb").put("type", "string")
-                .put("description", "Mounting phrase, e.g. 'suctioned flush against the plaster ceiling plane'. 12 words maximum.");
+                .put("description", "Mounting phrase, e.g. 'suctioned flush against the plaster ceiling plane'.");
         surrealItemProps.putObject("requiredNegatives").put("type", "string")
                 .put("description", "Comma-separated list of only the concrete components this mounting displaces, e.g. 'ladder, bunk bed, support posts, legs, stilts'. Never anatomical terms, never generic quality words.");
         surrealItems.putArray("required")
@@ -254,7 +254,7 @@ public record SceneContract(
             regionalItemProps.putObject("boundingDescription").put("type", "string")
                     .put("description", "Spatial bounding hint, e.g. 'right third, neck and hand contact coordinates'.");
             regionalItemProps.putObject("isolatedPrompt").put("type", "string")
-                    .put("description", "Local geometry and physical continuity within this zone only. Positive phrasing, no scene-wide context, no flags. 30 words maximum.");
+                    .put("description", "Local geometry and physical continuity within this zone only. Positive phrasing, no scene-wide context, no flags.");
             regionalItems.putArray("required")
                     .add("targetZone").add("boundingDescription").add("isolatedPrompt");
         }
@@ -280,13 +280,13 @@ public record SceneContract(
         clauseNode.put("description", "Four ordered prompt fragments assembled downstream. Each is a bare noun phrase with no leading article-of-instruction, no engine flags, no sentence connectives, and no quality boosters. Banned words: photorealistic, hyperrealistic, ultra-realistic, 8k, 16k, masterpiece, stunning, breathtaking, award winning, trending on artstation, unreal engine, octane render. State only what is physically present; never phrase anything as an exclusion.");
         ObjectNode clauseProps = clauseNode.putObject("properties");
         clauseProps.putObject("subjectClause").put("type", "string")
-                .put("description", "Who or what is in frame, with the count and separation of actors made explicit so attributes cannot bleed between them. 20 words maximum.");
+                .put("description", "Who or what is in frame, with the count and separation of actors made explicit so attributes cannot bleed between them.");
         clauseProps.putObject("actionClause").put("type", "string")
-                .put("description", "The physical action and body geometry, stated as concrete displacement. Every extremity's position designated positively, including in inverted poses. 25 words maximum.");
+                .put("description", "The physical action and body geometry, stated as concrete displacement. Every extremity's position designated positively, including in inverted poses.");
         clauseProps.putObject("spatialClause").put("type", "string")
-                .put("description", "Camera, framing, and depth planes, derived from cameraRig. Must match viewportAngle and primarySubjectOffset exactly. 20 words maximum.");
+                .put("description", "Camera, framing, and depth planes, derived from cameraRig. Must match viewportAngle and primarySubjectOffset exactly.");
         clauseProps.putObject("surfaceClause").put("type", "string")
-                .put("description", "Material, light, and atmosphere only, derived from environmentalOptics. No subject or camera terms here. 20 words maximum.");
+                .put("description", "Material, light, and atmosphere only, derived from environmentalOptics. No subject or camera terms here.");
         clauseNode.putArray("required")
                 .add("subjectClause").add("actionClause").add("spatialClause").add("surfaceClause");
 

@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  * its 77-token truncation); surface and optics occupy the tail.
  *
  * <p>Negative constructions are never rewritten in a way that preserves the negated noun.
- * A mapped positive replacement is substituted, or the construction is dropped outright.
+ * A mapped positive replacement is substituted, or the construction is normalized affirmatively.
  */
 public final class PromptCompiler {
 
@@ -82,9 +82,8 @@ public final class PromptCompiler {
             .toList();
 
     /**
-     * Concrete positive replacements for known failure-mode nouns. These are the only
-     * transforms permitted to survive a negative construction; anything unmapped is dropped,
-     * because losing a constraint is strictly safer than positively conditioning on it.
+     * Concrete positive replacements for structural/anatomical artifacts.
+     * Over-restrictive full-body and finger-count assertions removed.
      */
     private static final Map<Pattern, String> POSITIVE_SUBSTITUTIONS = new LinkedHashMap<>();
 
@@ -101,12 +100,6 @@ public final class PromptCompiler {
         POSITIVE_SUBSTITUTIONS.put(
                 Pattern.compile("(?i)\\b(detached|severed|truncated)\\s+(limbs?|hands?|arms?)\\b"),
                 "limbs continuous into shoulder and hip sockets");
-        POSITIVE_SUBSTITUTIONS.put(
-                Pattern.compile("(?i)\\bextra\\s+(fingers?|digits?)\\b"),
-                "exactly five fingers on each hand");
-        POSITIVE_SUBSTITUTIONS.put(
-                Pattern.compile("(?i)\\b(cropped|cut[- ]off)\\s+(feet|legs|figure)\\b"),
-                "full figure rendered head to footwear");
     }
 
     // Bounded so a stray construction cannot swallow the remainder of a clause.
@@ -187,9 +180,7 @@ public final class PromptCompiler {
 
     /**
      * Removal order matters: flags and banned tokens are stripped first, delimiter debris is
-     * collapsed afterwards, and edge punctuation is trimmed last. The previous revision
-     * trimmed punctuation before stripping banned tokens, which left interior ", ," artifacts
-     * in the final prompt.
+     * collapsed afterwards, and edge punctuation is trimmed last.
      */
     private static String normalizeFragment(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -238,12 +229,6 @@ public final class PromptCompiler {
     // Fragment sources
     // ---------------------------------------------------------------------
 
-    /**
-     * Contact geometry as bare noun phrases. No instructional scaffolding
-     * ("physical contact is structurally locked at ...") is emitted — those tokens have no
-     * visual referent and dilute the concrete nouns around them.
-     * Absent fields contribute nothing rather than a filler placeholder.
-     */
     private static List<String> contactFragments(SceneContract.InteractionDynamics dynamics) {
         if (dynamics == null) {
             return List.of();
@@ -255,11 +240,6 @@ public final class PromptCompiler {
         return out;
     }
 
-    /**
-     * Surreal mountings emit the geometric primitive and the mounting verb only. The original
-     * noun is deliberately withheld from the prompt: re-stating it is what reactivates the
-     * furniture heuristic the decomposition exists to defeat.
-     */
     private static List<String> surrealFragments(List<SceneContract.SurrealMounting> mountings) {
         if (mountings == null || mountings.isEmpty()) {
             return List.of();
@@ -313,11 +293,6 @@ public final class PromptCompiler {
     // Negation handling
     // ---------------------------------------------------------------------
 
-    /**
-     * Replaces or removes negative constructions. The captured noun is never carried
-     * forward — text encoders have no negation operator, so "actively suppressing floating
-     * hands" conditions the latent on floating hands.
-     */
     static String enforcePositivePhrasing(String input) {
         if (input == null || input.isBlank()) {
             return "";
@@ -326,7 +301,6 @@ public final class PromptCompiler {
         for (Pattern pattern : NEGATION_PATTERNS) {
             result = rewriteNegation(result, pattern);
         }
-        // Standalone failure-mode nouns appearing without a negation wrapper.
         for (Map.Entry<Pattern, String> entry : POSITIVE_SUBSTITUTIONS.entrySet()) {
             result = entry.getKey().matcher(result).replaceAll(Matcher.quoteReplacement(entry.getValue()));
         }
@@ -339,7 +313,9 @@ public final class PromptCompiler {
         while (matcher.find()) {
             String captured = matcher.group(1);
             String positive = lookupPositive(captured);
-            matcher.appendReplacement(sb, Matcher.quoteReplacement(positive == null ? "" : positive));
+            // Eşleşen pozitif ikame yoksa cümlenin kalanını yutmak yerine nesneyi koru.
+            String replacement = (positive != null) ? positive : captured.trim();
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(sb);
         return sb.toString();
@@ -361,12 +337,6 @@ public final class PromptCompiler {
     // Flag handling
     // ---------------------------------------------------------------------
 
-    /**
-     * Parses a flag string into an ordered map and merges additional negatives into the
-     * {@code --no} argument list. String concatenation was previously appending negatives to
-     * the tail of the whole flag string, binding them to whichever parameter happened to be
-     * last (typically {@code --v}, a numeric parameter).
-     */
     static String mergeFlags(String base, String extraNegatives) {
         Map<String, String> flags = new LinkedHashMap<>();
 
@@ -442,7 +412,6 @@ public final class PromptCompiler {
         return sanitized;
     }
 
-    /** Removes the delimiter debris left behind by token and negation removal. */
     static String collapseEmptySegments(String input) {
         if (input == null) {
             return "";
@@ -451,7 +420,7 @@ public final class PromptCompiler {
                 .replaceAll("\\s{2,}", " ")
                 .replaceAll("\\s+([,;.])", "$1")
                 .replaceAll("([,;])(?:\\s*[,;])+", "$1")
-                .replaceAll("(?:^|(?<=\\s))(?:a|an|the)\\s*(?=[,;.])", "")
+                .replaceAll("(?:^|(?<=\\s))(?:a|an|the|with|and|of|to)\\s*(?=[,;.])", "")
                 .replaceAll("^[\\s,;]+", "")
                 .replaceAll("[\\s,;]+$", "")
                 .replaceAll("\\s{2,}", " ")
@@ -529,7 +498,7 @@ public final class PromptCompiler {
             sb.append("  - Contact Point   : ").append(blankTo(c.interactionDynamics().contactPointCoordinate(), "[unspecified]")).append("\n");
             sb.append("  - Tension Vector  : ").append(blankTo(c.interactionDynamics().mutualTensionVector(), "[unspecified]")).append("\n");
             sb.append("  - Anatomy Lock    : ")
-                    .append(blankTo(enforcePositivePhrasing(c.interactionDynamics().anatomicalCommitment()), "[unspecified]"))
+                    .append(blankTo(c.interactionDynamics().anatomicalCommitment(), "[unspecified]"))
                     .append("\n");
         }
 

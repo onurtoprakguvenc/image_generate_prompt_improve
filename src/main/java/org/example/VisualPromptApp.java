@@ -103,7 +103,7 @@ public class VisualPromptApp {
     public static void main(String[] args) {
         String envKey = System.getenv("GEMINI_API_KEY");
         if (envKey == null || envKey.isBlank()) {
-            envKey = "geçici";
+            envKey = "temporary";
         }
         VisualPromptApp app;
         try {
@@ -214,10 +214,10 @@ public class VisualPromptApp {
         ObjectNode systemInstructionNode = rootNode.putObject("systemInstruction");
         ArrayNode sysParts = systemInstructionNode.putArray("parts");
         sysParts.addObject().put("text",
-                "You are a Physical Visual Staging Engine. Extract grounded physical parameters "
-                        + "conforming to the response schema. Every field description is binding. "
-                        + "Omit optional fields entirely when they do not apply rather than filling them "
-                        + "with placeholders. Emit no field the schema does not request.");
+                "Extract grounded, concrete physical parameters conforming to the response schema. "
+                        + "Focus strictly on measurable geometry, surfaces, and optical properties. "
+                        + "Omit optional fields entirely when absent rather than filling them with placeholders. "
+                        + "Emit no field the schema does not request.");
 
         ArrayNode contentsArray = rootNode.putArray("contents");
         ObjectNode contentObj = contentsArray.addObject();

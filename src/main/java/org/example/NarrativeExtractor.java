@@ -42,10 +42,9 @@ public class NarrativeExtractor {
         ObjectNode systemInstructionNode = rootNode.putObject("systemInstruction");
         ArrayNode sysParts = systemInstructionNode.putArray("parts");
         sysParts.addObject().put("text",
-                "Select the single most visually arresting and mechanically grounded moment from the "
-                        + "narrative. Discard internal monologue and metaphor; convert emotional weight into "
-                        + "concrete physical markers. Output one paragraph of objective single-moment staging "
-                        + "text. No markdown, no preamble, no commentary.");
+                "Isolate the single pivotal moment of highest physical tension and mechanical contact from the narrative. "
+                        + "Translate internal states entirely into observable physical postures, contact displacements, and dynamic forces. "
+                        + "Output a single objective paragraph of physical staging. Emit raw descriptive text directly.");
 
         ArrayNode contentsArray = rootNode.putArray("contents");
         ObjectNode contentObj = contentsArray.addObject();
