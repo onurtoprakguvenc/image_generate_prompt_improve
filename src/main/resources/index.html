@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VISUAL PROMPT COMPILER // ORCHESTRATOR</title>
+    <style>
+        :root {
+            --bg-0: #0a0c0a;
+            --bg-1: #101310;
+            --bg-2: #171b17;
+            --line: #2a302a;
+            --line-bright: #3d453d;
+            --text: #c9d1c9;
+            --text-dim: #6e786e;
+            --accent: #4ade80;
+            --accent-dim: #1f4d33;
+            --warn: #facc15;
+            --danger: #f87171;
+            --mono: "IBM Plex Mono", "JetBrains Mono", "Consolas", monospace;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg-0);
+            background-image:
+                    linear-gradient(var(--line) 1px, transparent 1px),
+                    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+            background-size: 28px 28px;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 1.5;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .frame {
+            max-width: 1100px;
+            margin: 0 auto;
+            border: 1px solid var(--line-bright);
+            background: rgba(10, 12, 10, 0.92);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--line-bright);
+            background: var(--bg-1);
+        }
+        .header .title {
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: var(--accent);
+            font-size: 13px;
+        }
+        .header .title span { color: var(--text-dim); font-weight: 400; }
+        .header .clock { color: var(--text-dim); font-size: 11px; }
+
+        .statusbar {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            border-bottom: 1px solid var(--line-bright);
+        }
+        .statusbar > div {
+            padding: 14px 18px;
+            border-right: 1px solid var(--line);
+        }
+        .statusbar > div:last-child { border-right: none; }
+
+        .field-label {
+            color: var(--text-dim);
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .segmented {
+            display: flex;
+            border: 1px solid var(--line-bright);
+            width: fit-content;
+        }
+        .segmented button {
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            font-family: var(--mono);
+            font-size: 11px;
+            padding: 6px 12px;
+            cursor: pointer;
+            border-right: 1px solid var(--line-bright);
+        }
+        .segmented button:last-child { border-right: none; }
+        .segmented button.active {
+            background: var(--accent-dim);
+            color: var(--accent);
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border: 1px solid var(--line-bright);
+            font-size: 11px;
+            letter-spacing: 2px;
+            font-weight: 700;
+        }
+        .status-pill .dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: var(--text-dim);
+        }
+        .status-pill.active { color: var(--warn); border-color: var(--warn); }
+        .status-pill.active .dot { background: var(--warn); }
+        .status-pill.processing { color: var(--warn); border-color: var(--warn); }
+        .status-pill.processing .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: pulse 0.6s infinite; }
+        .status-pill.locked { color: var(--accent); border-color: var(--accent); }
+        .status-pill.locked .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        .body-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+        @media (max-width: 860px) {
+            .body-grid { grid-template-columns: 1fr; }
+        }
+
+        .col-left { border-right: 1px solid var(--line-bright); }
+
+        .slot {
+            padding: 16px 18px;
+            border-bottom: 1px solid var(--line);
+            transition: opacity 0.2s ease;
+        }
+        .slot.disabled {
+            opacity: 0.3;
+            pointer-events: none;
+        }
+        .slot.locked-stage {
+            border-left: 3px solid var(--accent);
+            background: rgba(31, 77, 51, 0.08);
+        }
+        .slot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 6px;
+        }
+        .slot-title {
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: var(--text);
+            font-weight: 700;
+        }
+        .slot-title .num {
+            color: var(--accent);
+            margin-right: 6px;
+        }
+        .slot-sub {
+            color: var(--text-dim);
+            font-size: 10px;
+            margin-bottom: 8px;
+        }
+        .step-badge {
+            font-size: 9px;
+            letter-spacing: 1px;
+            padding: 2px 6px;
+            border: 1px solid var(--line-bright);
+            color: var(--text-dim);
+        }
+        .slot.active-stage .step-badge { border-color: var(--warn); color: var(--warn); }
+        .slot.locked-stage .step-badge { border-color: var(--accent); color: var(--accent); }
+
+        textarea {
+            width: 100%;
+            background: var(--bg-1);
+            border: 1px solid var(--line-bright);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 12px;
+            padding: 10px;
+            resize: vertical;
+            min-height: 70px;
+            line-height: 1.5;
+        }
+        textarea:focus { outline: none; border-color: var(--accent); }
+        textarea:disabled {
+            background: var(--bg-0);
+            color: var(--text-dim);
+            border-color: var(--line);
+            cursor: not-allowed;
+        }
+
+        .actions {
+            display: flex;
+            border-bottom: 1px solid var(--line-bright);
+        }
+        .actions button {
+            flex: 1;
+            padding: 14px;
+            font-family: var(--mono);
+            font-size: 12px;
+            letter-spacing: 2px;
+            font-weight: 700;
+            border: none;
+            cursor: pointer;
+            border-right: 1px solid var(--line-bright);
+        }
+        .actions button:last-child { border-right: none; }
+        .btn-action {
+            background: var(--accent-dim);
+            color: var(--accent);
+        }
+        .btn-action:hover:not(:disabled) { background: #245c3d; }
+        .btn-action:disabled { color: var(--text-dim); background: var(--bg-1); cursor: not-allowed; }
+        .btn-reset {
+            background: var(--bg-1);
+            color: var(--text-dim);
+        }
+        .btn-reset:hover { color: var(--danger); border-color: var(--danger); }
+
+        .output-panel { padding: 16px 18px; }
+        .output-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .output-title {
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            color: var(--text-dim);
+        }
+        .copy-btn {
+            background: var(--bg-1);
+            border: 1px solid var(--line-bright);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 1px;
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+        .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .copy-btn.copied { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+        #outputBox {
+            width: 100%;
+            min-height: 120px;
+            background: var(--bg-1);
+            border: 1px solid var(--line-bright);
+            color: var(--accent);
+            font-family: var(--mono);
+            font-size: 12px;
+            line-height: 1.6;
+            padding: 12px;
+            resize: vertical;
+        }
+        #outputBox.empty { color: var(--text-dim); }
+
+        .report { padding: 16px 18px; }
+        .report-title {
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+        .report-console {
+            background: var(--bg-1);
+            border: 1px solid var(--line);
+            padding: 10px 12px;
+            font-size: 11px;
+            color: var(--text-dim);
+            min-height: 90px;
+            max-height: 160px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .report-console .row { margin-bottom: 4px; }
+        .report-console .tag { color: var(--accent); font-weight: 700; }
+        .report-console .tag.stage { color: var(--warn); font-weight: 700; }
+        .report-console .tag.note { color: var(--danger); }
+
+        .footer {
+            padding: 10px 18px;
+            border-top: 1px solid var(--line-bright);
+            background: var(--bg-1);
+            color: var(--text-dim);
+            font-size: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+
+<div class="frame">
+    <div class="header">
+        <div class="title">VISUAL_PROMPT_COMPILER <span>// 3-STAGE STATEFUL ORCHESTRATOR</span></div>
+        <div class="clock" id="clock">--:--:--</div>
+    </div>
+
+    <div class="statusbar">
+        <div>
+            <div class="field-label">Engine Profile</div>
+            <div class="segmented" id="engineSeg">
+                <button data-val="mj">MIDJOURNEY V6.1</button>
+                <button data-val="flux" class="active">FLUX.1-DEV</button>
+            </div>
+        </div>
+        <div>
+            <div class="field-label">Aspect Ratio</div>
+            <div class="segmented" id="arSeg">
+                <button data-val="16:9" class="active">16:9</button>
+                <button data-val="9:16">9:16</button>
+                <button data-val="1:1">1:1</button>
+                <button data-val="4:5">4:5</button>
+                <button data-val="21:9">21:9</button>
+            </div>
+        </div>
+        <div>
+            <div class="field-label">System Status</div>
+            <div class="status-pill active" id="statusPill"><span class="dot"></span><span id="statusText">STAGE 1 ACTIVE</span></div>
+        </div>
+    </div>
+
+    <div class="body-grid">
+        <div class="col-left">
+            <div class="slot active-stage" id="slot1">
+                <div class="slot-header">
+                    <div class="slot-title"><span class="num">01</span>AŞAMA 1: MEKAN &amp; ZAMAN ÇIPASI</div>
+                    <div class="step-badge" id="badge1">AKTİF</div>
+                </div>
+                <div class="slot-sub">Fiziksel zemin, dönem, saat ve aydınlatma koşulları</div>
+                <textarea id="slotOneInput" placeholder="Örn: modern city intersection, 2015, midday harsh sun, cracked asphalt road"></textarea>
+            </div>
+
+            <div class="slot disabled" id="slot2">
+                <div class="slot-header">
+                    <div class="slot-title"><span class="num">02</span>AŞAMA 2: HAM SAHNE &amp; AKSİYON</div>
+                    <div class="step-badge" id="badge2">BEKLİYOR</div>
+                </div>
+                <div class="slot-sub">Karakter kimliği, eylem, güçler, kostüm, etkileşim</div>
+                <textarea id="slotTwoInput" disabled placeholder="Örn: a fearless woman with superpowers stand against a gigantic creature"></textarea>
+            </div>
+
+            <div class="slot disabled" id="slot3" style="border-bottom:none;">
+                <div class="slot-header">
+                    <div class="slot-title"><span class="num">03</span>AŞAMA 3: OPTİK DİREKTİFLER</div>
+                    <div class="step-badge" id="badge3">BEKLİYOR</div>
+                </div>
+                <div class="slot-sub">Kamera açısı, lens derinliği, motor parametreleri (opsiyonel)</div>
+                <textarea id="slotThreeInput" disabled placeholder="Örn: 28mm lens, low-angle looking upward framing massive scale"></textarea>
+            </div>
+        </div>
+
+        <div class="col-right">
+            <div class="output-panel">
+                <div class="output-header">
+                    <div class="output-title">CANLI DERLEME ÇIKTISI</div>
+                    <button class="copy-btn" id="copyBtn">KOPYALA</button>
+                </div>
+                <textarea id="outputBox" class="empty" readonly>[ SİSTEM HAZIR — AŞAMA 1 İLE BAŞLAYIN ]</textarea>
+            </div>
+
+            <div class="report">
+                <div class="report-title">ORKESTRASYON LOGLARI</div>
+                <div class="report-console" id="reportConsole"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="actions">
+        <button class="btn-action" id="actionBtn">AŞAMA 1'İ İŞLE VE KİLİTLE →</button>
+        <button class="btn-reset" id="resetBtn">SIFIRLA (RESET)</button>
+    </div>
+
+    <div class="footer">
+        <span>STATEFUL COMPILER: SLOT_1 → COMPILE → SLOT_2 → COMPILE → SLOT_3 → LOCK</span>
+        <span id="footerState">CURRENT: STAGE 1 (ENVIRONMENT)</span>
+    </div>
+</div>
+
+<script>
+    (function () {
+        "use strict";
+
+        var state = {
+            step: 1, // 1: Env, 2: Action, 3: Directives, 4: Done/Locked
+            engine: "flux",
+            ar: "16:9"
+        };
+
+        var els = {
+            engineSeg: document.getElementById("engineSeg"),
+            arSeg: document.getElementById("arSeg"),
+            statusPill: document.getElementById("statusPill"),
+            statusText: document.getElementById("statusText"),
+            footerState: document.getElementById("footerState"),
+
+            slot1: document.getElementById("slot1"),
+            slot2: document.getElementById("slot2"),
+            slot3: document.getElementById("slot3"),
+            badge1: document.getElementById("badge1"),
+            badge2: document.getElementById("badge2"),
+            badge3: document.getElementById("badge3"),
+
+            slotOneInput: document.getElementById("slotOneInput"),
+            slotTwoInput: document.getElementById("slotTwoInput"),
+            slotThreeInput: document.getElementById("slotThreeInput"),
+
+            actionBtn: document.getElementById("actionBtn"),
+            resetBtn: document.getElementById("resetBtn"),
+            copyBtn: document.getElementById("copyBtn"),
+            outputBox: document.getElementById("outputBox"),
+            reportConsole: document.getElementById("reportConsole"),
+            clock: document.getElementById("clock")
+        };
+
+        function tickClock() {
+            var d = new Date();
+            var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+            els.clock.textContent = pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+        }
+        tickClock();
+        setInterval(tickClock, 1000);
+
+        function wireSegmented(container, onSelect) {
+            container.querySelectorAll("button").forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    if (state.step === 4) return;
+                    container.querySelectorAll("button").forEach(function (b) { b.classList.remove("active"); });
+                    btn.classList.add("active");
+                    onSelect(btn.getAttribute("data-val"));
+                });
+            });
+        }
+        wireSegmented(els.engineSeg, function (val) { state.engine = val; });
+        wireSegmented(els.arSeg, function (val) { state.ar = val; });
+
+        function log(msg, tagType) {
+            var row = document.createElement("div");
+            row.className = "row";
+            var type = tagType || "ok";
+            var label = type === "stage" ? "STAGE" : (type === "note" ? "ERR" : "SYS");
+            row.innerHTML = '<span class="tag ' + type + '">[' + label + ']</span> ' + msg;
+            els.reportConsole.appendChild(row);
+            els.reportConsole.scrollTop = els.reportConsole.scrollHeight;
+        }
+
+        function executeTurnCall(targetStep, onComplete) {
+            els.statusPill.className = "status-pill processing";
+            els.statusText.textContent = "PROCESSING VIA LLM...";
+            els.actionBtn.disabled = true;
+            els.outputBox.classList.add("empty");
+            els.outputBox.value = "[ MOTOR AŞAMA " + targetStep + " İÇİN SÖZLEŞMEYİ VE ENTEGRASYONU ÇALIŞTIRIYOR... ]";
+
+            var payload = {
+                mode: "THREE_STAGE",
+                slotOne: els.slotOneInput.value,
+                slotTwo: (targetStep >= 2) ? els.slotTwoInput.value : "",
+                slotThree: (targetStep === 3) ? els.slotThreeInput.value : "",
+                engine: state.engine,
+                ar: state.ar,
+                model: "flash",
+                flags: "--style raw --v 6.1",
+                regionalPasses: true
+            };
+
+            fetch("/api/compile", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            })
+                .then(function (res) {
+                    return res.text().then(function (txt) { return { ok: res.ok, text: txt }; });
+                })
+                .then(function (res) {
+                    if (!res.ok) {
+                        log("Backend hatası: " + res.text, "note");
+                        els.statusPill.className = "status-pill active";
+                        els.statusText.textContent = "STAGE " + targetStep + " RETRY";
+                        els.actionBtn.disabled = false;
+                        return;
+                    }
+                    var data = JSON.parse(res.text);
+                    var prompt = (data.clipboardText || data.positivePrompt || "").trim();
+                    els.outputBox.value = prompt;
+                    els.outputBox.classList.remove("empty");
+                    onComplete(data);
+                })
+                .catch(function (err) {
+                    log("Ağ/Bağlantı hatası: " + err.message, "note");
+                    els.statusPill.className = "status-pill active";
+                    els.statusText.textContent = "STAGE " + targetStep + " RETRY";
+                    els.actionBtn.disabled = false;
+                });
+        }
+
+        function processTurn() {
+            if (state.step === 1) {
+                var s1 = els.slotOneInput.value.trim();
+                if (!s1) {
+                    log("Aşama 1 boş bırakılamaz. Çevre/mekan tanımlayın.", "note");
+                    return;
+                }
+                log("Aşama 1 girdisi backend LLM'e gönderildi: Çevre çıpası işleniyor...", "stage");
+                executeTurnCall(1, function () {
+                    log("Aşama 1 doğrulandı ve kilitlendi. Mekan ortamı sabitlendi.", "ok");
+                    state.step = 2;
+                    renderStepUI();
+                });
+            } else if (state.step === 2) {
+                var s2 = els.slotTwoInput.value.trim();
+                if (!s2) {
+                    log("Aşama 2 boş bırakılamaz. Karakter ve eylemi tanımlayın.", "note");
+                    return;
+                }
+                log("Aşama 2 girdisi backend LLM'e gönderildi: Ham sahne çevreye entegre ediliyor...", "stage");
+                executeTurnCall(2, function () {
+                    log("Aşama 2 doğrulandı ve kilitlendi. Karakter kimliği ve kinetik güçler entegre edildi.", "ok");
+                    state.step = 3;
+                    renderStepUI();
+                });
+            } else if (state.step === 3) {
+                log("Aşama 3 girdisi backend LLM'e gönderildi: Optik açılar ve final sözleşme derleniyor...", "stage");
+                executeTurnCall(3, function () {
+                    log("Aşama 3 derlemesi bitti. Tüm pipeline kilitlendi.", "ok");
+                    state.step = 4;
+                    renderStepUI();
+                });
+            }
+        }
+
+        function renderStepUI() {
+            if (state.step === 1) {
+                els.statusPill.className = "status-pill active";
+                els.statusText.textContent = "STAGE 1 ACTIVE";
+                els.footerState.textContent = "CURRENT: STAGE 1 (ENVIRONMENT)";
+                els.actionBtn.textContent = "AŞAMA 1'İ İŞLE VE KİLİTLE →";
+                els.actionBtn.disabled = false;
+
+                els.slot1.className = "slot active-stage";
+                els.slotOneInput.disabled = false;
+                els.badge1.textContent = "AKTİF";
+
+                els.slot2.className = "slot disabled";
+                els.slotTwoInput.disabled = true;
+                els.badge2.textContent = "BEKLİYOR";
+
+                els.slot3.className = "slot disabled";
+                els.slotThreeInput.disabled = true;
+                els.badge3.textContent = "BEKLİYOR";
+                els.slotOneInput.focus();
+            } else if (state.step === 2) {
+                els.statusPill.className = "status-pill active";
+                els.statusText.textContent = "STAGE 2 ACTIVE";
+                els.footerState.textContent = "CURRENT: STAGE 2 (SUBJECT & ACTION)";
+                els.actionBtn.textContent = "AŞAMA 2'Yİ İŞLE VE KİLİTLE →";
+                els.actionBtn.disabled = false;
+
+                els.slot1.className = "slot locked-stage";
+                els.slotOneInput.disabled = true;
+                els.badge1.textContent = "KİLİTLİ";
+
+                els.slot2.className = "slot active-stage";
+                els.slotTwoInput.disabled = false;
+                els.badge2.textContent = "AKTİF";
+
+                els.slot3.className = "slot disabled";
+                els.slotThreeInput.disabled = true;
+                els.badge3.textContent = "BEKLİYOR";
+                els.slotTwoInput.focus();
+            } else if (state.step === 3) {
+                els.statusPill.className = "status-pill active";
+                els.statusText.textContent = "STAGE 3 ACTIVE";
+                els.footerState.textContent = "CURRENT: STAGE 3 (DIRECTIVES)";
+                els.actionBtn.textContent = "FİNAL DERLE VE KİLİTLE";
+                els.actionBtn.disabled = false;
+
+                els.slot1.className = "slot locked-stage";
+                els.slotOneInput.disabled = true;
+                els.badge1.textContent = "KİLİTLİ";
+
+                els.slot2.className = "slot locked-stage";
+                els.slotTwoInput.disabled = true;
+                els.badge2.textContent = "KİLİTLİ";
+
+                els.slot3.className = "slot active-stage";
+                els.slotThreeInput.disabled = false;
+                els.badge3.textContent = "AKTİF";
+                els.slotThreeInput.focus();
+            } else if (state.step === 4) {
+                els.statusPill.className = "status-pill locked";
+                els.statusText.textContent = "PIPELINE LOCKED";
+                els.footerState.textContent = "STATE: CLOSED. USE RESET TO START OVER.";
+                els.actionBtn.textContent = "KİLİTLENDİ (RESET BUTONUNA BASIN)";
+                els.actionBtn.disabled = true;
+
+                els.slot1.className = "slot locked-stage";
+                els.slot2.className = "slot locked-stage";
+                els.slot3.className = "slot locked-stage";
+                els.slotOneInput.disabled = true;
+                els.slotTwoInput.disabled = true;
+                els.slotThreeInput.disabled = true;
+                els.badge1.textContent = "KİLİTLİ";
+                els.badge2.textContent = "KİLİTLİ";
+                els.badge3.textContent = "KİLİTLİ";
+            }
+        }
+
+        function reset() {
+            state.step = 1;
+            els.slotOneInput.value = "";
+            els.slotTwoInput.value = "";
+            els.slotThreeInput.value = "";
+            els.outputBox.value = "[ SİSTEM HAZIR — AŞAMA 1 İLE BAŞLAYIN ]";
+            els.outputBox.classList.add("empty");
+            els.reportConsole.innerHTML = "";
+            log("Sistem sıfırlandı. 1. Aşama oturumu açıldı.", "stage");
+            renderStepUI();
+        }
+
+        function copyOutput() {
+            var text = els.outputBox.value;
+            if (!text || els.outputBox.classList.contains("empty")) return;
+            navigator.clipboard.writeText(text).then(function () {
+                els.copyBtn.textContent = "[✓] KOPYALANDI";
+                els.copyBtn.classList.add("copied");
+                setTimeout(function () {
+                    els.copyBtn.textContent = "KOPYALA";
+                    els.copyBtn.classList.remove("copied");
+                }, 2000);
+            });
+        }
+
+        els.actionBtn.addEventListener("click", processTurn);
+        els.resetBtn.addEventListener("click", reset);
+        els.copyBtn.addEventListener("click", copyOutput);
+
+        log("Orkestratör başlatıldı. Aşama 1 için ortam verisi bekleniyor.", "stage");
+        renderStepUI();
+    })();
+</script>
+</body>
+</html>

@@ -17,8 +17,9 @@ import java.util.stream.Collectors;
  * of the string (highest effective attention weight, and the only region CLIP-L sees before
  * its 77-token truncation); surface and optics occupy the tail.
  *
- * <p>Negative constructions are never rewritten in a way that preserves the negated noun.
- * A mapped positive replacement is substituted, or the construction is normalized affirmatively.
+ * <p>Negative constructions are rewritten affirmatively where an anatomical replacement is
+ * mapped; unmapped constructions fall back to retaining the captured noun to prevent
+ * structural clause truncation.
  */
 public final class PromptCompiler {
 
@@ -400,6 +401,13 @@ public final class PromptCompiler {
     // ---------------------------------------------------------------------
     // Text hygiene
     // ---------------------------------------------------------------------
+
+    public static String purgeLexicalPolicy(String input) {
+        if (input == null || input.isBlank()) {
+            return "";
+        }
+        return collapseEmptySegments(stripBannedTokens(input));
+    }
 
     private static String stripBannedTokens(String input) {
         if (input == null) {
