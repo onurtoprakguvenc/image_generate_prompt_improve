@@ -43,6 +43,7 @@ import java.util.stream.Stream;
 
 public class VisualPromptApp {
 
+
     private static final int SERVER_PORT = 8080;
     private static final String API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
     private static final Pattern INLINE_AR_PATTERN = Pattern.compile("--ar\\s+([0-9]+:[0-9]+)", Pattern.CASE_INSENSITIVE);
@@ -51,7 +52,7 @@ public class VisualPromptApp {
     private static final String RULE = "---------------------------------------------------------------------------";
 
     public enum GeminiModel {
-        FLASH("gemini-3.5-flash", "Gemini 3.5 Flash (Fast Draft)"),
+        FLASH("gemini-3.6-flash", "Gemini 3.6 Flash (Fast Draft)"),
         PRO("gemini-3.1-pro", "Gemini 3.1 Pro (High-Fidelity Reasoning)");
 
         private final String endpointId;
@@ -113,7 +114,7 @@ public class VisualPromptApp {
     public static void main(String[] args) {
         String envKey = System.getenv("GEMINI_API_KEY");
         if (envKey == null || envKey.isBlank()) {
-            envKey = "temporary";
+            envKey = "buraya gemini apı anahtarı yapıştır";
         }
         VisualPromptApp app;
         try {

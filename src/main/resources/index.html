@@ -17,11 +17,10 @@
             --accent-dim: #1f4d33;
             --warn: #facc15;
             --danger: #f87171;
+            --info: #60a5fa;
             --mono: "IBM Plex Mono", "JetBrains Mono", "Consolas", monospace;
         }
-
         * { box-sizing: border-box; }
-
         body {
             margin: 0;
             background: var(--bg-0);
@@ -36,14 +35,12 @@
             padding: 20px;
             min-height: 100vh;
         }
-
         .frame {
-            max-width: 1100px;
+            max-width: 1200px;
             margin: 0 auto;
             border: 1px solid var(--line-bright);
-            background: rgba(10, 12, 10, 0.92);
+            background: rgba(10,12,10,0.93);
         }
-
         .header {
             display: flex;
             justify-content: space-between;
@@ -52,263 +49,205 @@
             border-bottom: 1px solid var(--line-bright);
             background: var(--bg-1);
         }
-        .header .title {
-            font-weight: 700;
-            letter-spacing: 2px;
-            color: var(--accent);
-            font-size: 13px;
-        }
-        .header .title span { color: var(--text-dim); font-weight: 400; }
-        .header .clock { color: var(--text-dim); font-size: 11px; }
+        .header .title { font-weight:700; letter-spacing:2px; color:var(--accent); font-size:13px; }
+        .header .title span { color:var(--text-dim); font-weight:400; }
+        .header .clock { color:var(--text-dim); font-size:11px; }
 
-        .statusbar {
+        /* ── Controls bar */
+        .controlbar {
             display: grid;
             grid-template-columns: 1fr 1fr auto;
             border-bottom: 1px solid var(--line-bright);
         }
-        .statusbar > div {
-            padding: 14px 18px;
-            border-right: 1px solid var(--line);
-        }
-        .statusbar > div:last-child { border-right: none; }
-
-        .field-label {
-            color: var(--text-dim);
-            font-size: 10px;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            margin-bottom: 8px;
-        }
-
-        .segmented {
-            display: flex;
-            border: 1px solid var(--line-bright);
-            width: fit-content;
-        }
+        .controlbar > div { padding:14px 18px; border-right:1px solid var(--line); }
+        .controlbar > div:last-child { border-right:none; }
+        .field-label { color:var(--text-dim); font-size:10px; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:8px; }
+        .segmented { display:flex; border:1px solid var(--line-bright); width:fit-content; }
         .segmented button {
-            background: transparent;
-            border: none;
-            color: var(--text-dim);
-            font-family: var(--mono);
-            font-size: 11px;
-            padding: 6px 12px;
-            cursor: pointer;
-            border-right: 1px solid var(--line-bright);
+            background:transparent; border:none; color:var(--text-dim);
+            font-family:var(--mono); font-size:11px; padding:6px 12px; cursor:pointer;
+            border-right:1px solid var(--line-bright);
         }
-        .segmented button:last-child { border-right: none; }
-        .segmented button.active {
-            background: var(--accent-dim);
-            color: var(--accent);
-        }
-
+        .segmented button:last-child { border-right:none; }
+        .segmented button.active { background:var(--accent-dim); color:var(--accent); }
         .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 14px;
-            border: 1px solid var(--line-bright);
-            font-size: 11px;
-            letter-spacing: 2px;
-            font-weight: 700;
+            display:inline-flex; align-items:center; gap:8px;
+            padding:6px 14px; border:1px solid var(--line-bright);
+            font-size:11px; letter-spacing:2px; font-weight:700;
         }
-        .status-pill .dot {
-            width: 7px; height: 7px;
-            border-radius: 50%;
-            background: var(--text-dim);
+        .status-pill .dot { width:7px; height:7px; border-radius:50%; background:var(--text-dim); }
+        .status-pill.active  { color:var(--warn);   border-color:var(--warn);   }
+        .status-pill.active .dot  { background:var(--warn); }
+        .status-pill.running { color:var(--warn);   border-color:var(--warn);   }
+        .status-pill.running .dot { background:var(--warn); box-shadow:0 0 8px var(--warn); animation:pulse .6s infinite; }
+        .status-pill.locked  { color:var(--accent); border-color:var(--accent); }
+        .status-pill.locked .dot  { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+        .status-pill.error   { color:var(--danger); border-color:var(--danger); }
+        .status-pill.error .dot   { background:var(--danger); }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        /* ── Pipeline track */
+        .pipeline-track {
+            display:flex; align-items:center; padding:12px 18px;
+            border-bottom:1px solid var(--line-bright); background:var(--bg-1); gap:0;
         }
-        .status-pill.active { color: var(--warn); border-color: var(--warn); }
-        .status-pill.active .dot { background: var(--warn); }
-        .status-pill.processing { color: var(--warn); border-color: var(--warn); }
-        .status-pill.processing .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: pulse 0.6s infinite; }
-        .status-pill.locked { color: var(--accent); border-color: var(--accent); }
-        .status-pill.locked .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+        .pipe-node { display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto; }
+        .pipe-circle {
+            width:30px; height:30px; border-radius:50%;
+            border:2px solid var(--line-bright);
+            display:flex; align-items:center; justify-content:center;
+            font-size:11px; font-weight:700; color:var(--text-dim);
+            background:var(--bg-0); transition:all .3s;
+        }
+        .pipe-label { font-size:9px; letter-spacing:1px; color:var(--text-dim); white-space:nowrap; }
+        .pipe-node.done   .pipe-circle { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+        .pipe-node.active .pipe-circle { border-color:var(--warn);   color:var(--warn);   background:rgba(250,204,21,.08); animation:pulse .8s infinite; }
+        .pipe-node.done   .pipe-label  { color:var(--accent); }
+        .pipe-node.active .pipe-label  { color:var(--warn); }
+        .pipe-connector { flex:1; height:2px; background:var(--line-bright); margin-bottom:16px; transition:background .3s; }
+        .pipe-connector.done { background:var(--accent); }
 
-        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-
+        /* ── Main layout */
         .body-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
+            display:grid;
+            grid-template-columns: 400px 1fr;
         }
-        @media (max-width: 860px) {
-            .body-grid { grid-template-columns: 1fr; }
-        }
+        @media(max-width:900px){ .body-grid { grid-template-columns:1fr; } }
+        .col-left  { border-right:1px solid var(--line-bright); display:flex; flex-direction:column; }
+        .col-right { display:flex; flex-direction:column; }
 
-        .col-left { border-right: 1px solid var(--line-bright); }
-
-        .slot {
-            padding: 16px 18px;
-            border-bottom: 1px solid var(--line);
-            transition: opacity 0.2s ease;
-        }
-        .slot.disabled {
-            opacity: 0.3;
-            pointer-events: none;
-        }
-        .slot.locked-stage {
-            border-left: 3px solid var(--accent);
-            background: rgba(31, 77, 51, 0.08);
-        }
-        .slot-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            margin-bottom: 6px;
-        }
-        .slot-title {
-            font-size: 11px;
-            letter-spacing: 1px;
-            color: var(--text);
-            font-weight: 700;
-        }
-        .slot-title .num {
-            color: var(--accent);
-            margin-right: 6px;
-        }
-        .slot-sub {
-            color: var(--text-dim);
-            font-size: 10px;
-            margin-bottom: 8px;
-        }
-        .step-badge {
-            font-size: 9px;
-            letter-spacing: 1px;
-            padding: 2px 6px;
-            border: 1px solid var(--line-bright);
-            color: var(--text-dim);
-        }
-        .slot.active-stage .step-badge { border-color: var(--warn); color: var(--warn); }
-        .slot.locked-stage .step-badge { border-color: var(--accent); color: var(--accent); }
-
+        /* ── Slots */
+        .slot { padding:16px 18px; border-bottom:1px solid var(--line); transition:opacity .2s; }
+        .slot.disabled { opacity:.28; pointer-events:none; }
+        .slot.locked-stage { border-left:3px solid var(--accent); background:rgba(31,77,51,.07); }
+        .slot.active-stage { border-left:3px solid var(--warn); }
+        .slot-header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; }
+        .slot-title  { font-size:11px; letter-spacing:1px; color:var(--text); font-weight:700; }
+        .slot-title .num { color:var(--accent); margin-right:6px; }
+        .slot-sub    { color:var(--text-dim); font-size:10px; margin-bottom:8px; }
+        .step-badge  { font-size:9px; letter-spacing:1px; padding:2px 7px; border:1px solid var(--line-bright); color:var(--text-dim); }
+        .slot.active-stage .step-badge { border-color:var(--warn);   color:var(--warn); }
+        .slot.locked-stage .step-badge { border-color:var(--accent); color:var(--accent); }
         textarea {
-            width: 100%;
-            background: var(--bg-1);
-            border: 1px solid var(--line-bright);
-            color: var(--text);
-            font-family: var(--mono);
-            font-size: 12px;
-            padding: 10px;
-            resize: vertical;
-            min-height: 70px;
-            line-height: 1.5;
+            width:100%; background:var(--bg-1); border:1px solid var(--line-bright);
+            color:var(--text); font-family:var(--mono); font-size:12px;
+            padding:10px; resize:vertical; min-height:68px; line-height:1.5;
         }
-        textarea:focus { outline: none; border-color: var(--accent); }
-        textarea:disabled {
-            background: var(--bg-0);
-            color: var(--text-dim);
-            border-color: var(--line);
-            cursor: not-allowed;
-        }
+        textarea:focus { outline:none; border-color:var(--accent); }
+        textarea:disabled { background:var(--bg-0); color:var(--text-dim); border-color:var(--line); cursor:not-allowed; }
 
-        .actions {
-            display: flex;
-            border-bottom: 1px solid var(--line-bright);
-        }
+        /* ── Action bar */
+        .actions { display:flex; border-top:1px solid var(--line-bright); }
         .actions button {
-            flex: 1;
-            padding: 14px;
-            font-family: var(--mono);
-            font-size: 12px;
-            letter-spacing: 2px;
-            font-weight: 700;
-            border: none;
-            cursor: pointer;
-            border-right: 1px solid var(--line-bright);
+            flex:1; padding:14px; font-family:var(--mono); font-size:12px;
+            letter-spacing:2px; font-weight:700; border:none; cursor:pointer;
+            border-right:1px solid var(--line-bright);
         }
-        .actions button:last-child { border-right: none; }
-        .btn-action {
-            background: var(--accent-dim);
-            color: var(--accent);
-        }
-        .btn-action:hover:not(:disabled) { background: #245c3d; }
-        .btn-action:disabled { color: var(--text-dim); background: var(--bg-1); cursor: not-allowed; }
-        .btn-reset {
-            background: var(--bg-1);
-            color: var(--text-dim);
-        }
-        .btn-reset:hover { color: var(--danger); border-color: var(--danger); }
+        .actions button:last-child { border-right:none; }
+        .btn-action { background:var(--accent-dim); color:var(--accent); }
+        .btn-action:hover:not(:disabled) { background:#245c3d; }
+        .btn-action:disabled { color:var(--text-dim); background:var(--bg-1); cursor:not-allowed; }
+        .btn-reset  { background:var(--bg-1); color:var(--text-dim); max-width:180px; }
+        .btn-reset:hover { color:var(--danger); }
 
-        .output-panel { padding: 16px 18px; }
-        .output-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
+        /* ── Right column: analysis stream */
+        .analysis-panel { flex:1; display:flex; flex-direction:column; }
+
+        .stage-tabs {
+            display:flex; border-bottom:1px solid var(--line-bright); background:var(--bg-1);
         }
-        .output-title {
-            font-size: 11px;
-            letter-spacing: 1.5px;
-            color: var(--text-dim);
+        .stage-tab {
+            flex:1; padding:10px 12px; font-family:var(--mono); font-size:10px;
+            letter-spacing:1.5px; font-weight:700; border:none; cursor:pointer;
+            background:transparent; color:var(--text-dim); border-right:1px solid var(--line-bright);
+            border-bottom:2px solid transparent; transition:all .2s;
         }
+        .stage-tab:last-child { border-right:none; }
+        .stage-tab.has-content { color:var(--text); }
+        .stage-tab.active-tab  { color:var(--accent); border-bottom-color:var(--accent); background:rgba(74,222,128,.04); }
+        .stage-tab.running-tab { color:var(--warn);   border-bottom-color:var(--warn); animation:pulse .8s infinite; }
+        .stage-tab:disabled    { cursor:not-allowed; opacity:.4; }
+
+        .tab-panels { flex:1; display:flex; flex-direction:column; }
+        .tab-panel  { display:none; flex:1; flex-direction:column; }
+        .tab-panel.visible { display:flex; }
+
+        .panel-header {
+            padding:10px 16px; border-bottom:1px solid var(--line);
+            display:flex; justify-content:space-between; align-items:center;
+        }
+        .panel-label { font-size:10px; letter-spacing:2px; color:var(--text-dim); }
+        .panel-label.active { color:var(--warn); }
+        .panel-label.done   { color:var(--accent); }
+
+        .analysis-stream {
+            flex:1; padding:14px 16px; overflow-y:auto;
+            font-size:12px; line-height:1.8; color:var(--text);
+            min-height:180px; max-height:320px;
+            white-space:pre-wrap; word-break:break-word;
+        }
+        .analysis-stream.idle { color:var(--text-dim); font-style:italic; }
+        .analysis-stream .cursor {
+            display:inline-block; width:8px; height:13px;
+            background:var(--warn); vertical-align:middle;
+            animation:pulse .6s infinite; margin-left:2px;
+        }
+
+        /* Final output box */
+        .final-output-wrap { border-top:1px solid var(--line-bright); }
+        .final-output-header {
+            display:flex; justify-content:space-between; align-items:center;
+            padding:10px 16px; border-bottom:1px solid var(--line);
+            background:var(--bg-1);
+        }
+        .final-label { font-size:10px; letter-spacing:2px; color:var(--text-dim); font-weight:700; }
+        .final-label.ready { color:var(--accent); }
         .copy-btn {
-            background: var(--bg-1);
-            border: 1px solid var(--line-bright);
-            color: var(--text);
-            font-family: var(--mono);
-            font-size: 10px;
-            letter-spacing: 1px;
-            padding: 6px 12px;
-            cursor: pointer;
+            background:var(--bg-1); border:1px solid var(--line-bright);
+            color:var(--text); font-family:var(--mono); font-size:10px;
+            letter-spacing:1px; padding:5px 12px; cursor:pointer;
         }
-        .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
-        .copy-btn.copied { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+        .copy-btn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+        .copy-btn.copied { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+        .copy-btn:disabled { opacity:.3; cursor:not-allowed; }
+        #finalOutput {
+            width:100%; min-height:90px; padding:12px 16px;
+            background:var(--bg-1); border:none; border-bottom:1px solid var(--line);
+            color:var(--accent); font-family:var(--mono); font-size:12px;
+            line-height:1.7; resize:vertical;
+        }
+        #finalOutput.idle { color:var(--text-dim); font-style:italic; }
 
-        #outputBox {
-            width: 100%;
-            min-height: 120px;
-            background: var(--bg-1);
-            border: 1px solid var(--line-bright);
-            color: var(--accent);
-            font-family: var(--mono);
-            font-size: 12px;
-            line-height: 1.6;
-            padding: 12px;
-            resize: vertical;
+        /* ── Log strip */
+        .log-strip {
+            border-top:1px solid var(--line-bright);
+            padding:8px 16px; font-size:10px; color:var(--text-dim);
+            max-height:72px; overflow-y:auto; background:var(--bg-0);
         }
-        #outputBox.empty { color: var(--text-dim); }
-
-        .report { padding: 16px 18px; }
-        .report-title {
-            font-size: 11px;
-            letter-spacing: 1.5px;
-            color: var(--text-dim);
-            margin-bottom: 8px;
-        }
-        .report-console {
-            background: var(--bg-1);
-            border: 1px solid var(--line);
-            padding: 10px 12px;
-            font-size: 11px;
-            color: var(--text-dim);
-            min-height: 90px;
-            max-height: 160px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-        }
-        .report-console .row { margin-bottom: 4px; }
-        .report-console .tag { color: var(--accent); font-weight: 700; }
-        .report-console .tag.stage { color: var(--warn); font-weight: 700; }
-        .report-console .tag.note { color: var(--danger); }
+        .log-row { margin-bottom:2px; }
+        .log-row .tag { font-weight:700; margin-right:5px; }
+        .tag-sys  { color:var(--accent); }
+        .tag-stage{ color:var(--warn); }
+        .tag-err  { color:var(--danger); }
 
         .footer {
-            padding: 10px 18px;
-            border-top: 1px solid var(--line-bright);
-            background: var(--bg-1);
-            color: var(--text-dim);
-            font-size: 10px;
-            display: flex;
-            justify-content: space-between;
+            padding:9px 18px; border-top:1px solid var(--line-bright);
+            background:var(--bg-1); color:var(--text-dim); font-size:10px;
+            display:flex; justify-content:space-between;
         }
     </style>
 </head>
 <body>
-
 <div class="frame">
+
+    <!-- Header -->
     <div class="header">
-        <div class="title">VISUAL_PROMPT_COMPILER <span>// 3-STAGE STATEFUL ORCHESTRATOR</span></div>
+        <div class="title">VISUAL_PROMPT_COMPILER <span>// 3-STAGE ANALYSIS PIPELINE</span></div>
         <div class="clock" id="clock">--:--:--</div>
     </div>
 
-    <div class="statusbar">
+    <!-- Controls -->
+    <div class="controlbar">
         <div>
             <div class="field-label">Engine Profile</div>
             <div class="segmented" id="engineSeg">
@@ -328,326 +267,673 @@
         </div>
         <div>
             <div class="field-label">System Status</div>
-            <div class="status-pill active" id="statusPill"><span class="dot"></span><span id="statusText">STAGE 1 ACTIVE</span></div>
+            <div class="status-pill active" id="statusPill">
+                <span class="dot"></span><span id="statusText">STAGE 1 ACTIVE</span>
+            </div>
         </div>
     </div>
 
+    <!-- Pipeline track -->
+    <div class="pipeline-track">
+        <div class="pipe-node active" id="pn1">
+            <div class="pipe-circle">1</div>
+            <div class="pipe-label">ENV ANALYSIS</div>
+        </div>
+        <div class="pipe-connector" id="pc1"></div>
+        <div class="pipe-node" id="pn2">
+            <div class="pipe-circle">2</div>
+            <div class="pipe-label">SCENE INTEGRATION</div>
+        </div>
+        <div class="pipe-connector" id="pc2"></div>
+        <div class="pipe-node" id="pn3">
+            <div class="pipe-circle">3</div>
+            <div class="pipe-label">FINAL COMPILE</div>
+        </div>
+    </div>
+
+    <!-- Body -->
     <div class="body-grid">
+
+        <!-- LEFT: inputs -->
         <div class="col-left">
             <div class="slot active-stage" id="slot1">
                 <div class="slot-header">
-                    <div class="slot-title"><span class="num">01</span>AŞAMA 1: MEKAN &amp; ZAMAN ÇIPASI</div>
+                    <div class="slot-title"><span class="num">01</span>MEKAN &amp; ZAMAN ÇIPASI</div>
                     <div class="step-badge" id="badge1">AKTİF</div>
                 </div>
-                <div class="slot-sub">Fiziksel zemin, dönem, saat ve aydınlatma koşulları</div>
-                <textarea id="slotOneInput" placeholder="Örn: modern city intersection, 2015, midday harsh sun, cracked asphalt road"></textarea>
+                <div class="slot-sub">Fiziksel zemin, dönem, saat, ışık, atmosfer</div>
+                <textarea id="s1" rows="3" placeholder="Örn: modern city intersection, 2015, midday harsh sun, cracked asphalt, glass towers"></textarea>
             </div>
 
             <div class="slot disabled" id="slot2">
                 <div class="slot-header">
-                    <div class="slot-title"><span class="num">02</span>AŞAMA 2: HAM SAHNE &amp; AKSİYON</div>
+                    <div class="slot-title"><span class="num">02</span>KARAKTER &amp; AKSİYON</div>
                     <div class="step-badge" id="badge2">BEKLİYOR</div>
                 </div>
                 <div class="slot-sub">Karakter kimliği, eylem, güçler, kostüm, etkileşim</div>
-                <textarea id="slotTwoInput" disabled placeholder="Örn: a fearless woman with superpowers stand against a gigantic creature"></textarea>
+                <textarea id="s2" rows="3" disabled placeholder="Örn: a fearless woman with lightning powers facing a gigantic shadow creature"></textarea>
             </div>
 
-            <div class="slot disabled" id="slot3" style="border-bottom:none;">
+            <div class="slot disabled" id="slot3">
                 <div class="slot-header">
-                    <div class="slot-title"><span class="num">03</span>AŞAMA 3: OPTİK DİREKTİFLER</div>
+                    <div class="slot-title"><span class="num">03</span>OPTİK DİREKTİFLER</div>
                     <div class="step-badge" id="badge3">BEKLİYOR</div>
                 </div>
-                <div class="slot-sub">Kamera açısı, lens derinliği, motor parametreleri (opsiyonel)</div>
-                <textarea id="slotThreeInput" disabled placeholder="Örn: 28mm lens, low-angle looking upward framing massive scale"></textarea>
+                <div class="slot-sub">Kamera, lens, çerçeveleme — opsiyonel</div>
+                <textarea id="s3" rows="3" disabled placeholder="Örn: 28mm wide lens, low-angle shot, subject framed left third"></textarea>
+            </div>
+
+            <div style="flex:1;"></div>
+            <div class="actions">
+                <button class="btn-action" id="actionBtn">ANALİZ ET VE İLERLE →</button>
+                <button class="btn-reset"  id="resetBtn">SIFIRLA</button>
             </div>
         </div>
 
+        <!-- RIGHT: analysis + output -->
         <div class="col-right">
-            <div class="output-panel">
-                <div class="output-header">
-                    <div class="output-title">CANLI DERLEME ÇIKTISI</div>
-                    <button class="copy-btn" id="copyBtn">KOPYALA</button>
+            <div class="analysis-panel">
+
+                <!-- Stage tabs -->
+                <div class="stage-tabs">
+                    <button class="stage-tab active-tab" id="tab1" disabled>01 ENV ANALİZİ</button>
+                    <button class="stage-tab" id="tab2" disabled>02 SAHNE ENTEGRASYONU</button>
+                    <button class="stage-tab" id="tab3" disabled>03 FİNAL COMPILE</button>
                 </div>
-                <textarea id="outputBox" class="empty" readonly>[ SİSTEM HAZIR — AŞAMA 1 İLE BAŞLAYIN ]</textarea>
+
+                <!-- Tab panels -->
+                <div class="tab-panels">
+
+                    <div class="tab-panel visible" id="panel1">
+                        <div class="panel-header">
+                            <span class="panel-label" id="plabel1">ÇEVRE VE IŞIK ANALİZİ BEKLENİYOR</span>
+                        </div>
+                        <div class="analysis-stream idle" id="stream1">[ Aşama 1 girdinizi doldurun ve "ANALİZ ET" butonuna basın.\nLLM çevre parametrelerini, ışık koşullarını ve atmosferi analiz edecek. ]</div>
+                    </div>
+
+                    <div class="tab-panel" id="panel2">
+                        <div class="panel-header">
+                            <span class="panel-label" id="plabel2">SAHNE ENTEGRASYON ANALİZİ BEKLENİYOR</span>
+                        </div>
+                        <div class="analysis-stream idle" id="stream2">[ Aşama 2 girdinizi doldurun.\nLLM karakteri ve aksiyonu Aşama 1 çevresiyle entegre edecek. ]</div>
+                    </div>
+
+                    <div class="tab-panel" id="panel3">
+                        <div class="panel-header">
+                            <span class="panel-label" id="plabel3">FİNAL COMPILE BEKLENİYOR</span>
+                        </div>
+                        <div class="analysis-stream idle" id="stream3">[ Tüm veriler kilitlendiğinde burada tam SceneContract derleme analizi gösterilecek. ]</div>
+                    </div>
+
+                </div>
+
+                <!-- Final output -->
+                <div class="final-output-wrap">
+                    <div class="final-output-header">
+                        <span class="final-label" id="finalLabel">FİNAL PROMPT — AŞAMA 3 TAMAMLANMADAN ÜRETİLMEZ</span>
+                        <button class="copy-btn" id="copyBtn" disabled>KOPYALA</button>
+                    </div>
+                    <textarea id="finalOutput" class="idle" readonly>[ Çıktı yalnızca Aşama 3 tamamlandıktan sonra burada görünür. ]</textarea>
+                </div>
+
             </div>
 
-            <div class="report">
-                <div class="report-title">ORKESTRASYON LOGLARI</div>
-                <div class="report-console" id="reportConsole"></div>
-            </div>
+            <!-- Log strip -->
+            <div class="log-strip" id="logStrip"></div>
         </div>
-    </div>
-
-    <div class="actions">
-        <button class="btn-action" id="actionBtn">AŞAMA 1'İ İŞLE VE KİLİTLE →</button>
-        <button class="btn-reset" id="resetBtn">SIFIRLA (RESET)</button>
     </div>
 
     <div class="footer">
-        <span>STATEFUL COMPILER: SLOT_1 → COMPILE → SLOT_2 → COMPILE → SLOT_3 → LOCK</span>
-        <span id="footerState">CURRENT: STAGE 1 (ENVIRONMENT)</span>
+        <span>PIPELINE: ENV ANALYSIS → SCENE INTEGRATION → FINAL COMPILE → OUTPUT</span>
+        <span id="footerState">STAGE 1: ENVIRONMENT</span>
     </div>
-</div>
 
+</div>
 <script>
-    (function () {
+    (function(){
         "use strict";
 
-        var state = {
-            step: 1, // 1: Env, 2: Action, 3: Directives, 4: Done/Locked
-            engine: "flux",
-            ar: "16:9"
-        };
+// ── State
+        var cache = { s1:"", s2:"", s3:"", analysis1:"", analysis2:"" };
+        var state = { step:1, engine:"flux", ar:"16:9", busy:false };
 
+// ── Elements
+        var $ = function(id){ return document.getElementById(id); };
         var els = {
-            engineSeg: document.getElementById("engineSeg"),
-            arSeg: document.getElementById("arSeg"),
-            statusPill: document.getElementById("statusPill"),
-            statusText: document.getElementById("statusText"),
-            footerState: document.getElementById("footerState"),
-
-            slot1: document.getElementById("slot1"),
-            slot2: document.getElementById("slot2"),
-            slot3: document.getElementById("slot3"),
-            badge1: document.getElementById("badge1"),
-            badge2: document.getElementById("badge2"),
-            badge3: document.getElementById("badge3"),
-
-            slotOneInput: document.getElementById("slotOneInput"),
-            slotTwoInput: document.getElementById("slotTwoInput"),
-            slotThreeInput: document.getElementById("slotThreeInput"),
-
-            actionBtn: document.getElementById("actionBtn"),
-            resetBtn: document.getElementById("resetBtn"),
-            copyBtn: document.getElementById("copyBtn"),
-            outputBox: document.getElementById("outputBox"),
-            reportConsole: document.getElementById("reportConsole"),
-            clock: document.getElementById("clock")
+            engineSeg:$("engineSeg"), arSeg:$("arSeg"),
+            statusPill:$("statusPill"), statusText:$("statusText"),
+            footerState:$("footerState"),
+            slot1:$("slot1"), slot2:$("slot2"), slot3:$("slot3"),
+            badge1:$("badge1"), badge2:$("badge2"), badge3:$("badge3"),
+            s1:$("s1"), s2:$("s2"), s3:$("s3"),
+            actionBtn:$("actionBtn"), resetBtn:$("resetBtn"),
+            copyBtn:$("copyBtn"),
+            finalOutput:$("finalOutput"), finalLabel:$("finalLabel"),
+            tab1:$("tab1"), tab2:$("tab2"), tab3:$("tab3"),
+            panel1:$("panel1"), panel2:$("panel2"), panel3:$("panel3"),
+            plabel1:$("plabel1"), plabel2:$("plabel2"), plabel3:$("plabel3"),
+            stream1:$("stream1"), stream2:$("stream2"), stream3:$("stream3"),
+            pn1:$("pn1"), pn2:$("pn2"), pn3:$("pn3"),
+            pc1:$("pc1"), pc2:$("pc2"),
+            logStrip:$("logStrip"), clock:$("clock")
         };
 
-        function tickClock() {
-            var d = new Date();
-            var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
-            els.clock.textContent = pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
-        }
-        tickClock();
-        setInterval(tickClock, 1000);
+// ── Clock
+        (function tick(){
+            var d=new Date(), p=function(n){return n<10?"0"+n:""+n;};
+            els.clock.textContent=p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+            setTimeout(tick,1000);
+        })();
 
-        function wireSegmented(container, onSelect) {
-            container.querySelectorAll("button").forEach(function (btn) {
-                btn.addEventListener("click", function () {
-                    if (state.step === 4) return;
-                    container.querySelectorAll("button").forEach(function (b) { b.classList.remove("active"); });
+// ── Segmented
+        function wireSegs(el, cb){
+            el.querySelectorAll("button").forEach(function(btn){
+                btn.addEventListener("click",function(){
+                    if(state.busy||state.step===4) return;
+                    el.querySelectorAll("button").forEach(function(b){b.classList.remove("active");});
                     btn.classList.add("active");
-                    onSelect(btn.getAttribute("data-val"));
+                    cb(btn.getAttribute("data-val"));
                 });
             });
         }
-        wireSegmented(els.engineSeg, function (val) { state.engine = val; });
-        wireSegmented(els.arSeg, function (val) { state.ar = val; });
+        wireSegs(els.engineSeg, function(v){state.engine=v;});
+        wireSegs(els.arSeg,     function(v){state.ar=v;});
 
-        function log(msg, tagType) {
-            var row = document.createElement("div");
-            row.className = "row";
-            var type = tagType || "ok";
-            var label = type === "stage" ? "STAGE" : (type === "note" ? "ERR" : "SYS");
-            row.innerHTML = '<span class="tag ' + type + '">[' + label + ']</span> ' + msg;
-            els.reportConsole.appendChild(row);
-            els.reportConsole.scrollTop = els.reportConsole.scrollHeight;
+// ── Log
+        function log(msg, type){
+            var row=document.createElement("div");
+            row.className="log-row";
+            var cls=type==="stage"?"tag-stage":type==="err"?"tag-err":"tag-sys";
+            var lbl=type==="stage"?"STAGE":type==="err"?"ERR":"SYS";
+            row.innerHTML='<span class="tag '+cls+'">['+lbl+']</span>'+msg;
+            els.logStrip.appendChild(row);
+            els.logStrip.scrollTop=els.logStrip.scrollHeight;
         }
 
-        function executeTurnCall(targetStep, onComplete) {
-            els.statusPill.className = "status-pill processing";
-            els.statusText.textContent = "PROCESSING VIA LLM...";
-            els.actionBtn.disabled = true;
-            els.outputBox.classList.add("empty");
-            els.outputBox.value = "[ MOTOR AŞAMA " + targetStep + " İÇİN SÖZLEŞMEYİ VE ENTEGRASYONU ÇALIŞTIRIYOR... ]";
+// ── Tab switching
+        function showTab(n){
+            [1,2,3].forEach(function(i){
+                els["panel"+i].classList.toggle("visible", i===n);
+                var tab=els["tab"+i];
+                tab.classList.remove("active-tab","running-tab");
+                if(i===n) tab.classList.add("active-tab");
+            });
+        }
+        [1,2,3].forEach(function(i){
+            els["tab"+i].addEventListener("click",function(){
+                if(!els["tab"+i].disabled) showTab(i);
+            });
+        });
 
-            var payload = {
-                mode: "THREE_STAGE",
-                slotOne: els.slotOneInput.value,
-                slotTwo: (targetStep >= 2) ? els.slotTwoInput.value : "",
-                slotThree: (targetStep === 3) ? els.slotThreeInput.value : "",
-                engine: state.engine,
-                ar: state.ar,
-                model: "flash",
-                flags: "--style raw --v 6.1",
-                regionalPasses: true
-            };
+// ── Pipeline nodes
+        function updatePipe(){
+            var s=state.step;
+            els.pn1.className="pipe-node"+(s===1?" active":s>1?" done":"");
+            els.pc1.className="pipe-connector"+(s>1?" done":"");
+            els.pn2.className="pipe-node"+(s===2?" active":s>2?" done":"");
+            els.pc2.className="pipe-connector"+(s>2?" done":"");
+            els.pn3.className="pipe-node"+(s===3?" active":s>3?" done":"");
+        }
 
-            fetch("/api/compile", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
+// ── Stream text into an element char by char
+        function streamInto(el, text, onDone){
+            el.classList.remove("idle");
+            el.textContent="";
+            // Add blinking cursor span
+            var cursor=document.createElement("span");
+            cursor.className="cursor";
+            el.appendChild(cursor);
+
+            var i=0;
+            var words=text.split("");
+            var interval=setInterval(function(){
+                if(i>=words.length){
+                    clearInterval(interval);
+                    cursor.remove();
+                    if(onDone) onDone();
+                    return;
+                }
+                // Insert before cursor
+                el.insertBefore(document.createTextNode(words[i]), cursor);
+                el.scrollTop=el.scrollHeight;
+                i++;
+            }, 18);
+        }
+
+// ── API call wrapper: sends a plain prompt string to Gemini via the
+//    /api/compile endpoint using DIRECT mode so we can craft a custom
+//    analytical prompt for stages 1 and 2.
+//
+//    For stage 3 we use THREE_STAGE mode with the full cached context.
+        function callAnalysis(userPrompt, stageNum, onSuccess, onError){
+            // We hijack the rawScene field in DIRECT mode to send an analysis prompt.
+            var payload;
+
+            if(stageNum < 3){
+                payload = {
+                    mode: "DIRECT",
+                    rawScene: userPrompt,
+                    engine: state.engine,
+                    ar: state.ar,
+                    model: "flash",
+                    flags: "--style raw --v 6.1",
+                    regionalPasses: false
+                };
+            } else {
+                payload = {
+                    mode: "THREE_STAGE",
+                    slotOne:   cache.s1,
+                    slotTwo:   cache.s2,
+                    slotThree: cache.s3,
+                    engine: state.engine,
+                    ar: state.ar,
+                    model: "flash",
+                    flags: "--style raw --v 6.1",
+                    regionalPasses: true
+                };
+            }
+
+            fetch("/api/compile",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify(payload)
             })
-                .then(function (res) {
-                    return res.text().then(function (txt) { return { ok: res.ok, text: txt }; });
+                .then(function(res){
+                    var ok=res.ok;
+                    return res.json().then(function(d){return{ok:ok,data:d};});
                 })
-                .then(function (res) {
-                    if (!res.ok) {
-                        log("Backend hatası: " + res.text, "note");
-                        els.statusPill.className = "status-pill active";
-                        els.statusText.textContent = "STAGE " + targetStep + " RETRY";
-                        els.actionBtn.disabled = false;
+                .then(function(r){
+                    if(!r.ok){
+                        onError((r.data&&r.data.error)||"Sunucu hata döndürdü.");
                         return;
                     }
-                    var data = JSON.parse(res.text);
-                    var prompt = (data.clipboardText || data.positivePrompt || "").trim();
-                    els.outputBox.value = prompt;
-                    els.outputBox.classList.remove("empty");
-                    onComplete(data);
+                    onSuccess(r.data);
                 })
-                .catch(function (err) {
-                    log("Ağ/Bağlantı hatası: " + err.message, "note");
-                    els.statusPill.className = "status-pill active";
-                    els.statusText.textContent = "STAGE " + targetStep + " RETRY";
+                .catch(function(e){ onError(e&&e.message?e.message:String(e)); });
+        }
+
+// ── Build the Stage 1 analytical prompt — we wrap the user's raw
+//    environment text in an analysis request rather than a compile request.
+        function buildEnvAnalysisPrompt(raw){
+            return "ENVIRONMENT ANALYSIS TASK:\n\n"
+                + "Analyse the following scene environment description. Extract and expand:\n"
+                + "1. LOCATION & ERA: physical space, architecture, period, cultural context\n"
+                + "2. TEMPORAL ANCHOR: time of day, season, implied weather\n"
+                + "3. LIGHTING MODEL: primary light source, direction, quality (hard/soft/diffuse), color temperature\n"
+                + "4. ATMOSPHERIC LAYER: particulates, haze, humidity, air clarity\n"
+                + "5. GROUND PLANE & TEXTURE: surface material, condition, reflectivity\n"
+                + "6. DEPTH PLANES: foreground/midground/background separation\n\n"
+                + "Output a structured physical analysis. Be precise and visual. No vague adjectives.\n\n"
+                + "INPUT:\n" + raw;
+        }
+
+// ── Build the Stage 2 analytical prompt — integrates character into
+//    the already-analysed environment from Stage 1.
+        function buildSceneIntegrationPrompt(envAnalysis, actionRaw){
+            return "SCENE INTEGRATION ANALYSIS TASK:\n\n"
+                + "You have an established environment analysis and a new character/action description.\n"
+                + "Integrate them into a single unified scene staging.\n\n"
+                + "ENVIRONMENT ANALYSIS (from Stage 1):\n"
+                + envAnalysis + "\n\n"
+                + "CHARACTER & ACTION INPUT:\n"
+                + actionRaw + "\n\n"
+                + "Produce a unified scene analysis covering:\n"
+                + "1. SUBJECT PLACEMENT: where in the environment, distance from camera, framing\n"
+                + "2. KINEMATIC CHAIN: full body posture, weight distribution, limb positions\n"
+                + "3. ACTION VECTOR: direction and intensity of movement or force\n"
+                + "4. CONTACT & INTERACTION: what the character touches, pushes, stands on\n"
+                + "5. LIGHT ON SUBJECT: how the environment lighting from Stage 1 falls on this character\n"
+                + "6. DRAMATIC TENSION: what the scene communicates visually\n\n"
+                + "Output structured physical staging. Concrete and visual only.";
+        }
+
+// ── Stage handlers
+
+        function runStage1(){
+            var raw = els.s1.value.trim();
+            if(!raw){ log("Aşama 1 boş olamaz.","err"); return; }
+            cache.s1 = raw;
+
+            // UI: lock slot 1, show running
+            state.busy = true;
+            els.actionBtn.disabled = true;
+            els.resetBtn.disabled  = true;
+            els.statusPill.className = "status-pill running";
+            els.statusText.textContent = "STAGE 1 — ANALYSING…";
+            els.slot1.className = "slot locked-stage";
+            els.slot1.querySelector("textarea").disabled = true;
+            els.badge1.textContent = "ANALİZ EDİLİYOR…";
+            els.pn1.className = "pipe-node active";
+
+            // Switch to panel 1 and show cursor
+            showTab(1);
+            els.tab1.classList.add("running-tab");
+            els.tab1.disabled = false;
+            els.plabel1.textContent = "ÇEVRE ANALİZİ ÇALIŞIYOR…";
+            els.plabel1.className = "panel-label active";
+            els.stream1.classList.remove("idle");
+            els.stream1.textContent = "";
+            var cursor1 = document.createElement("span");
+            cursor1.className = "cursor";
+            els.stream1.appendChild(cursor1);
+
+            log("Stage 1: Çevre ve ışık analizi başlatıldı.", "stage");
+
+            var analyticalPrompt = buildEnvAnalysisPrompt(raw);
+
+            callAnalysis(analyticalPrompt, 1,
+                function(data){
+                    // Extract the best textual analysis from the response.
+                    // The backend returns a SceneContract — we reconstruct a readable
+                    // analysis from the structuralReport and the dramaticAction field.
+                    var analysis = data.structuralReport || data.positivePrompt || "";
+                    if(!analysis){
+                        analysis = "[Analiz verisi alınamadı — backend yanıtı boş.]";
+                    }
+                    cache.analysis1 = analysis;
+
+                    cursor1.remove();
+                    streamInto(els.stream1, analysis, function(){
+                        // Done streaming Stage 1 analysis
+                        els.tab1.classList.remove("running-tab");
+                        els.badge1.textContent = "KİLİTLİ ✓";
+                        els.slot1.className = "slot locked-stage";
+                        els.plabel1.textContent = "✓ ÇEVRE ANALİZİ TAMAMLANDI";
+                        els.plabel1.className = "panel-label done";
+
+                        // Unlock Stage 2
+                        state.step = 2;
+                        state.busy = false;
+                        updatePipe();
+                        renderUI();
+                        log("Stage 1 tamamlandı. Çevre parametreleri kilitlendi.", "sys");
+                    });
+                },
+                function(err){
+                    cursor1.remove();
+                    els.stream1.textContent = "[HATA: " + err + "]";
+                    els.stream1.classList.add("idle");
+                    els.tab1.classList.remove("running-tab");
+                    els.badge1.textContent = "HATA";
+                    state.busy = false;
                     els.actionBtn.disabled = false;
-                });
+                    els.resetBtn.disabled  = false;
+                    els.statusPill.className = "status-pill error";
+                    els.statusText.textContent = "STAGE 1 ERROR";
+                    log("Stage 1 hata: " + err, "err");
+                }
+            );
         }
 
-        function processTurn() {
-            if (state.step === 1) {
-                var s1 = els.slotOneInput.value.trim();
-                if (!s1) {
-                    log("Aşama 1 boş bırakılamaz. Çevre/mekan tanımlayın.", "note");
-                    return;
+        function runStage2(){
+            var raw = els.s2.value.trim();
+            if(!raw){ log("Aşama 2 boş olamaz.","err"); return; }
+            cache.s2 = raw;
+
+            state.busy = true;
+            els.actionBtn.disabled = true;
+            els.resetBtn.disabled  = true;
+            els.statusPill.className = "status-pill running";
+            els.statusText.textContent = "STAGE 2 — INTEGRATING…";
+            els.slot2.className = "slot locked-stage";
+            els.s2.disabled = true;
+            els.badge2.textContent = "ENTEGRE EDİLİYOR…";
+            els.pn2.className = "pipe-node active";
+
+            showTab(2);
+            els.tab2.classList.add("running-tab");
+            els.tab2.disabled = false;
+            els.plabel2.textContent = "SAHNE ENTEGRASYONU ÇALIŞIYOR…";
+            els.plabel2.className = "panel-label active";
+            els.stream2.classList.remove("idle");
+            els.stream2.textContent = "";
+            var cursor2 = document.createElement("span");
+            cursor2.className = "cursor";
+            els.stream2.appendChild(cursor2);
+
+            log("Stage 2: Karakter ve sahne entegrasyonu başlatıldı.", "stage");
+
+            var integrationPrompt = buildSceneIntegrationPrompt(cache.analysis1, raw);
+
+            callAnalysis(integrationPrompt, 2,
+                function(data){
+                    var analysis = data.structuralReport || data.positivePrompt || "";
+                    if(!analysis) analysis = "[Entegrasyon verisi alınamadı.]";
+                    cache.analysis2 = analysis;
+
+                    cursor2.remove();
+                    streamInto(els.stream2, analysis, function(){
+                        els.tab2.classList.remove("running-tab");
+                        els.badge2.textContent = "KİLİTLİ ✓";
+                        els.slot2.className = "slot locked-stage";
+                        els.plabel2.textContent = "✓ SAHNE ENTEGRASYONU TAMAMLANDI";
+                        els.plabel2.className = "panel-label done";
+
+                        state.step = 3;
+                        state.busy = false;
+                        updatePipe();
+                        renderUI();
+                        log("Stage 2 tamamlandı. Sahne entegrasyonu kilitlendi.", "sys");
+                    });
+                },
+                function(err){
+                    cursor2.remove();
+                    els.stream2.textContent = "[HATA: " + err + "]";
+                    els.stream2.classList.add("idle");
+                    els.tab2.classList.remove("running-tab");
+                    els.badge2.textContent = "HATA";
+                    state.busy = false;
+                    els.actionBtn.disabled = false;
+                    els.resetBtn.disabled  = false;
+                    els.statusPill.className = "status-pill error";
+                    els.statusText.textContent = "STAGE 2 ERROR";
+                    log("Stage 2 hata: " + err, "err");
                 }
-                log("Aşama 1 girdisi backend LLM'e gönderildi: Çevre çıpası işleniyor...", "stage");
-                executeTurnCall(1, function () {
-                    log("Aşama 1 doğrulandı ve kilitlendi. Mekan ortamı sabitlendi.", "ok");
-                    state.step = 2;
-                    renderStepUI();
-                });
-            } else if (state.step === 2) {
-                var s2 = els.slotTwoInput.value.trim();
-                if (!s2) {
-                    log("Aşama 2 boş bırakılamaz. Karakter ve eylemi tanımlayın.", "note");
-                    return;
+            );
+        }
+
+        function runStage3(){
+            cache.s3 = els.s3.value.trim(); // optional
+
+            state.busy = true;
+            els.actionBtn.disabled = true;
+            els.resetBtn.disabled  = true;
+            els.statusPill.className = "status-pill running";
+            els.statusText.textContent = "STAGE 3 — COMPILING…";
+            els.slot3.className = "slot locked-stage";
+            els.s3.disabled = true;
+            els.badge3.textContent = "DERLENİYOR…";
+            els.pn3.className = "pipe-node active";
+
+            showTab(3);
+            els.tab3.classList.add("running-tab");
+            els.tab3.disabled = false;
+            els.plabel3.textContent = "FİNAL SCENECONTRACT DERLENİYOR…";
+            els.plabel3.className = "panel-label active";
+            els.stream3.classList.remove("idle");
+            els.stream3.textContent = "";
+            var cursor3 = document.createElement("span");
+            cursor3.className = "cursor";
+            els.stream3.appendChild(cursor3);
+
+            els.finalOutput.value = "[ Derleme tamamlanıyor… ]";
+            els.finalOutput.className = "idle";
+
+            log("Stage 3: Tüm analiz verileri birleştiriliyor, final SceneContract derleniyor.", "stage");
+
+            callAnalysis(null, 3,
+                function(data){
+                    var report = data.structuralReport || "";
+                    var prompt = (data.clipboardText || data.positivePrompt || "").trim();
+
+                    cursor3.remove();
+
+                    if(!prompt){
+                        els.stream3.textContent = "[Prompt üretilemedi. Backend loglarını kontrol edin.]";
+                        els.stream3.classList.add("idle");
+                        els.tab3.classList.remove("running-tab");
+                        state.busy = false;
+                        els.actionBtn.disabled = false;
+                        els.resetBtn.disabled  = false;
+                        els.statusPill.className = "status-pill error";
+                        els.statusText.textContent = "STAGE 3 ERROR";
+                        log("Stage 3: boş prompt.", "err");
+                        return;
+                    }
+
+                    // Stream the structural report into panel 3
+                    streamInto(els.stream3, report || "SceneContract derlendi.", function(){
+                        els.tab3.classList.remove("running-tab");
+                        els.badge3.textContent = "TAMAMLANDI ✓";
+                        els.plabel3.textContent = "✓ FİNAL COMPILE TAMAMLANDI";
+                        els.plabel3.className = "panel-label done";
+
+                        // Stream the final prompt into the output box
+                        els.finalOutput.className = "";
+                        els.finalOutput.value = "";
+                        // Simple character-by-character into a textarea
+                        var chars = prompt.split("");
+                        var idx = 0;
+                        els.finalLabel.textContent = "✓ FİNAL DERLENMIŞ PROMPT";
+                        els.finalLabel.className = "final-label ready";
+                        var t = setInterval(function(){
+                            if(idx >= chars.length){
+                                clearInterval(t);
+                                els.copyBtn.disabled = false;
+                                state.step = 4;
+                                state.busy = false;
+                                updatePipe();
+                                renderUI();
+                                log("Pipeline tamamlandı. Final prompt hazır.", "sys");
+                                return;
+                            }
+                            els.finalOutput.value += chars[idx];
+                            idx++;
+                        }, 14);
+                    });
+                },
+                function(err){
+                    cursor3.remove();
+                    els.stream3.textContent = "[HATA: " + err + "]";
+                    els.stream3.classList.add("idle");
+                    els.tab3.classList.remove("running-tab");
+                    els.badge3.textContent = "HATA";
+                    state.busy = false;
+                    els.actionBtn.disabled = false;
+                    els.resetBtn.disabled  = false;
+                    els.statusPill.className = "status-pill error";
+                    els.statusText.textContent = "STAGE 3 ERROR";
+                    log("Stage 3 hata: " + err, "err");
                 }
-                log("Aşama 2 girdisi backend LLM'e gönderildi: Ham sahne çevreye entegre ediliyor...", "stage");
-                executeTurnCall(2, function () {
-                    log("Aşama 2 doğrulandı ve kilitlendi. Karakter kimliği ve kinetik güçler entegre edildi.", "ok");
-                    state.step = 3;
-                    renderStepUI();
-                });
-            } else if (state.step === 3) {
-                log("Aşama 3 girdisi backend LLM'e gönderildi: Optik açılar ve final sözleşme derleniyor...", "stage");
-                executeTurnCall(3, function () {
-                    log("Aşama 3 derlemesi bitti. Tüm pipeline kilitlendi.", "ok");
-                    state.step = 4;
-                    renderStepUI();
-                });
+            );
+        }
+
+// ── Button click
+        function processTurn(){
+            if(state.busy) return;
+            if(state.step===1) runStage1();
+            else if(state.step===2) runStage2();
+            else if(state.step===3) runStage3();
+        }
+
+// ── Render UI for current step (non-LLM parts only)
+        function renderUI(){
+            updatePipe();
+            if(state.step===1){
+                els.statusPill.className="status-pill active";
+                els.statusText.textContent="STAGE 1 ACTIVE";
+                els.footerState.textContent="STAGE 1: ENVIRONMENT";
+                els.actionBtn.textContent="ANALİZ ET VE İLERLE →";
+                els.actionBtn.disabled=false; els.resetBtn.disabled=false;
+                els.slot1.className="slot active-stage"; els.s1.disabled=false; els.badge1.textContent="AKTİF";
+                els.slot2.className="slot disabled";      els.s2.disabled=true;  els.badge2.textContent="BEKLİYOR";
+                els.slot3.className="slot disabled";      els.s3.disabled=true;  els.badge3.textContent="BEKLİYOR";
+                els.tab1.disabled=false; els.tab2.disabled=true; els.tab3.disabled=true;
+                els.s1.focus();
+            } else if(state.step===2){
+                els.statusPill.className="status-pill active";
+                els.statusText.textContent="STAGE 2 ACTIVE";
+                els.footerState.textContent="STAGE 2: SCENE INTEGRATION";
+                els.actionBtn.textContent="ENTEGRE ET VE İLERLE →";
+                els.actionBtn.disabled=false; els.resetBtn.disabled=false;
+                els.slot1.className="slot locked-stage"; els.s1.disabled=true;  els.badge1.textContent="KİLİTLİ ✓";
+                els.slot2.className="slot active-stage"; els.s2.disabled=false; els.badge2.textContent="AKTİF";
+                els.slot3.className="slot disabled";     els.s3.disabled=true;  els.badge3.textContent="BEKLİYOR";
+                els.tab1.disabled=false; els.tab2.disabled=false; els.tab3.disabled=true;
+                els.s2.focus();
+            } else if(state.step===3){
+                els.statusPill.className="status-pill active";
+                els.statusText.textContent="STAGE 3 — READY";
+                els.footerState.textContent="STAGE 3: FINAL COMPILE";
+                els.actionBtn.textContent="▶ FİNAL COMPILE — PROMPT ÜRET";
+                els.actionBtn.disabled=false; els.resetBtn.disabled=false;
+                els.slot1.className="slot locked-stage"; els.s1.disabled=true;  els.badge1.textContent="KİLİTLİ ✓";
+                els.slot2.className="slot locked-stage"; els.s2.disabled=true;  els.badge2.textContent="KİLİTLİ ✓";
+                els.slot3.className="slot active-stage"; els.s3.disabled=false; els.badge3.textContent="AKTİF (OPSİYONEL)";
+                els.tab1.disabled=false; els.tab2.disabled=false; els.tab3.disabled=false;
+                showTab(3);
+                els.s3.focus();
+            } else if(state.step===4){
+                els.statusPill.className="status-pill locked";
+                els.statusText.textContent="PIPELINE COMPLETE ✓";
+                els.footerState.textContent="COMPLETE — RESET TO RESTART";
+                els.actionBtn.textContent="TAMAMLANDI"; els.actionBtn.disabled=true;
+                els.resetBtn.disabled=false;
+                els.slot1.className="slot locked-stage"; els.slot2.className="slot locked-stage"; els.slot3.className="slot locked-stage";
+                els.s1.disabled=true; els.s2.disabled=true; els.s3.disabled=true;
+                els.badge1.textContent="KİLİTLİ ✓"; els.badge2.textContent="KİLİTLİ ✓"; els.badge3.textContent="KİLİTLİ ✓";
+                els.tab1.disabled=false; els.tab2.disabled=false; els.tab3.disabled=false;
             }
         }
 
-        function renderStepUI() {
-            if (state.step === 1) {
-                els.statusPill.className = "status-pill active";
-                els.statusText.textContent = "STAGE 1 ACTIVE";
-                els.footerState.textContent = "CURRENT: STAGE 1 (ENVIRONMENT)";
-                els.actionBtn.textContent = "AŞAMA 1'İ İŞLE VE KİLİTLE →";
-                els.actionBtn.disabled = false;
-
-                els.slot1.className = "slot active-stage";
-                els.slotOneInput.disabled = false;
-                els.badge1.textContent = "AKTİF";
-
-                els.slot2.className = "slot disabled";
-                els.slotTwoInput.disabled = true;
-                els.badge2.textContent = "BEKLİYOR";
-
-                els.slot3.className = "slot disabled";
-                els.slotThreeInput.disabled = true;
-                els.badge3.textContent = "BEKLİYOR";
-                els.slotOneInput.focus();
-            } else if (state.step === 2) {
-                els.statusPill.className = "status-pill active";
-                els.statusText.textContent = "STAGE 2 ACTIVE";
-                els.footerState.textContent = "CURRENT: STAGE 2 (SUBJECT & ACTION)";
-                els.actionBtn.textContent = "AŞAMA 2'Yİ İŞLE VE KİLİTLE →";
-                els.actionBtn.disabled = false;
-
-                els.slot1.className = "slot locked-stage";
-                els.slotOneInput.disabled = true;
-                els.badge1.textContent = "KİLİTLİ";
-
-                els.slot2.className = "slot active-stage";
-                els.slotTwoInput.disabled = false;
-                els.badge2.textContent = "AKTİF";
-
-                els.slot3.className = "slot disabled";
-                els.slotThreeInput.disabled = true;
-                els.badge3.textContent = "BEKLİYOR";
-                els.slotTwoInput.focus();
-            } else if (state.step === 3) {
-                els.statusPill.className = "status-pill active";
-                els.statusText.textContent = "STAGE 3 ACTIVE";
-                els.footerState.textContent = "CURRENT: STAGE 3 (DIRECTIVES)";
-                els.actionBtn.textContent = "FİNAL DERLE VE KİLİTLE";
-                els.actionBtn.disabled = false;
-
-                els.slot1.className = "slot locked-stage";
-                els.slotOneInput.disabled = true;
-                els.badge1.textContent = "KİLİTLİ";
-
-                els.slot2.className = "slot locked-stage";
-                els.slotTwoInput.disabled = true;
-                els.badge2.textContent = "KİLİTLİ";
-
-                els.slot3.className = "slot active-stage";
-                els.slotThreeInput.disabled = false;
-                els.badge3.textContent = "AKTİF";
-                els.slotThreeInput.focus();
-            } else if (state.step === 4) {
-                els.statusPill.className = "status-pill locked";
-                els.statusText.textContent = "PIPELINE LOCKED";
-                els.footerState.textContent = "STATE: CLOSED. USE RESET TO START OVER.";
-                els.actionBtn.textContent = "KİLİTLENDİ (RESET BUTONUNA BASIN)";
-                els.actionBtn.disabled = true;
-
-                els.slot1.className = "slot locked-stage";
-                els.slot2.className = "slot locked-stage";
-                els.slot3.className = "slot locked-stage";
-                els.slotOneInput.disabled = true;
-                els.slotTwoInput.disabled = true;
-                els.slotThreeInput.disabled = true;
-                els.badge1.textContent = "KİLİTLİ";
-                els.badge2.textContent = "KİLİTLİ";
-                els.badge3.textContent = "KİLİTLİ";
-            }
-        }
-
-        function reset() {
-            state.step = 1;
-            els.slotOneInput.value = "";
-            els.slotTwoInput.value = "";
-            els.slotThreeInput.value = "";
-            els.outputBox.value = "[ SİSTEM HAZIR — AŞAMA 1 İLE BAŞLAYIN ]";
-            els.outputBox.classList.add("empty");
-            els.reportConsole.innerHTML = "";
-            log("Sistem sıfırlandı. 1. Aşama oturumu açıldı.", "stage");
-            renderStepUI();
-        }
-
-        function copyOutput() {
-            var text = els.outputBox.value;
-            if (!text || els.outputBox.classList.contains("empty")) return;
-            navigator.clipboard.writeText(text).then(function () {
-                els.copyBtn.textContent = "[✓] KOPYALANDI";
-                els.copyBtn.classList.add("copied");
-                setTimeout(function () {
-                    els.copyBtn.textContent = "KOPYALA";
-                    els.copyBtn.classList.remove("copied");
-                }, 2000);
+// ── Reset
+        function reset(){
+            if(state.busy) return;
+            state.step=1; state.busy=false;
+            cache={s1:"",s2:"",s3:"",analysis1:"",analysis2:""};
+            els.s1.value=""; els.s2.value=""; els.s3.value="";
+            [1,2,3].forEach(function(i){
+                els["stream"+i].textContent="";
+                els["stream"+i].classList.add("idle");
+                els["tab"+i].classList.remove("active-tab","running-tab");
+                els["plabel"+i].className="panel-label";
             });
+            els.stream1.textContent="[ Aşama 1 girdinizi doldurun ve 'ANALİZ ET' butonuna basın. ]";
+            els.stream2.textContent="[ Aşama 2 girdinizi doldurun. LLM karakteri Aşama 1 çevresiyle entegre edecek. ]";
+            els.stream3.textContent="[ Tüm veriler kilitlendiğinde burada tam SceneContract derleme analizi gösterilecek. ]";
+            els.plabel1.textContent="ÇEVRE VE IŞIK ANALİZİ BEKLENİYOR";
+            els.plabel2.textContent="SAHNE ENTEGRASYON ANALİZİ BEKLENİYOR";
+            els.plabel3.textContent="FİNAL COMPILE BEKLENİYOR";
+            els.finalOutput.value="[ Çıktı yalnızca Aşama 3 tamamlandıktan sonra burada görünür. ]";
+            els.finalOutput.className="idle";
+            els.finalLabel.textContent="FİNAL PROMPT — AŞAMA 3 TAMAMLANMADAN ÜRETİLMEZ";
+            els.finalLabel.className="final-label";
+            els.copyBtn.disabled=true;
+            els.logStrip.innerHTML="";
+            showTab(1);
+            log("Sistem sıfırlandı.","sys");
+            renderUI();
         }
+
+// ── Copy
+        els.copyBtn.addEventListener("click",function(){
+            var t=els.finalOutput.value;
+            if(!t||els.copyBtn.disabled) return;
+            navigator.clipboard.writeText(t).then(function(){
+                els.copyBtn.textContent="[✓] KOPYALANDI";
+                els.copyBtn.classList.add("copied");
+                setTimeout(function(){els.copyBtn.textContent="KOPYALA";els.copyBtn.classList.remove("copied");},2000);
+            });
+        });
 
         els.actionBtn.addEventListener("click", processTurn);
-        els.resetBtn.addEventListener("click", reset);
-        els.copyBtn.addEventListener("click", copyOutput);
+        els.resetBtn.addEventListener("click",  reset);
 
-        log("Orkestratör başlatıldı. Aşama 1 için ortam verisi bekleniyor.", "stage");
-        renderStepUI();
+// ── Boot
+        log("Pipeline başlatıldı. Aşama 1 için çevre verisi bekleniyor.","sys");
+        showTab(1);
+        renderUI();
+
     })();
 </script>
 </body>
